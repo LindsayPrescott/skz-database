@@ -2,6 +2,8 @@ from datetime import date
 from typing import Optional
 from pydantic import BaseModel
 
+from app.schemas.tracks import TrackResponse
+
 
 class ReleaseBase(BaseModel):
     title: str
@@ -27,3 +29,18 @@ class ReleaseResponse(ReleaseBase):
     notes: Optional[str] = None
 
     model_config = {"from_attributes": True}
+
+
+class ReleaseWithTracksResponse(ReleaseResponse):
+    """
+    Release with an inline `tracks` array. Shape of each track depends on
+    the `?tracks=` parameter used to request this response:
+
+    - `summary` — each track contains `{track_number, disc_number,
+      is_title_track, version_note, song: {id, title, duration_seconds}}`
+    - `full` — each track contains all flags plus a complete nested `song`
+      object (all song fields including `credits`)
+
+    The schema below documents the **full** shape.
+    """
+    tracks: list[TrackResponse] = []

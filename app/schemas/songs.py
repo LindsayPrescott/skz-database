@@ -15,6 +15,8 @@ class SongCreditResponse(BaseModel):
 
 class SongBase(BaseModel):
     title: str
+    parent_song_id: Optional[int] = None
+    version_label: Optional[str] = None
     title_korean: Optional[str] = None
     title_romanized: Optional[str] = None
     title_japanese: Optional[str] = None
@@ -43,3 +45,4 @@ class SongResponse(SongBase):
 
 class SongWithCreditsResponse(SongResponse):
     credits: list[SongCreditResponse] = []
+    versions: list[SongResponse] = []

@@ -160,6 +160,8 @@ def parse_title_cell(cell: Tag) -> str:
     title = title.strip('"').strip("\u201c\u201d").strip('"').strip()
     # Remove any remaining leading/trailing quote characters left by partial stripping
     title = re.sub(r'^["\u201c\u201d\u2018\u2019]+|["\u201d\u2019"]+$', "", title).strip()
+    # Remove closing quote embedded before a parenthetical, e.g. 'Fam" (Korean version)'
+    title = re.sub(r'["\u201d"]+\s*(?=\()', ' ', title).strip()
     return title
 
 

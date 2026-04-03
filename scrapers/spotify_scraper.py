@@ -44,8 +44,7 @@ SPOTIFY_ARTIST_URL  = "https://api.spotify.com/v1/artists"
 SPOTIFY_ALBUM_URL   = "https://api.spotify.com/v1/albums"
 SPOTIFY_TRACKS_URL  = "https://api.spotify.com/v1/tracks"
 
-# Stray Kids' Spotify artist ID — stable, never changes
-SKZ_SPOTIFY_ARTIST_ID = "2o5jDhtHVPhrJdv3cEQ99Z"
+SKZ_ARTIST_NAME = "Stray Kids"
 
 # Only enrich songs with these statuses
 ENRICHABLE_STATUSES = {"released"}
@@ -110,10 +109,26 @@ class SpotifyScraper:
     # Spotify data fetchers
     # -----------------------------------------------------------------------
 
+    def get_artist_id(self) -> str:
+        """Look up Stray Kids' Spotify artist ID dynamically."""
+        data = self._get(SPOTIFY_SEARCH_URL, params={
+            "q": f"artist:{SKZ_ARTIST_NAME}",
+            "type": "artist",
+            "limit": 1,
+            "market": "US",
+        })
+        items = data.get("artists", {}).get("items", [])
+        if not items:
+            raise RuntimeError("Could not find Stray Kids on Spotify")
+        artist_id = items[0]["id"]
+        logger.info(f"  Stray Kids Spotify artist ID: {artist_id}")
+        return artist_id
+
     def get_artist_albums(self) -> list[dict]:
         """Fetch all albums/EPs/singles for Stray Kids from Spotify."""
+        artist_id = self.get_artist_id()
         albums = []
-        url = f"{SPOTIFY_ARTIST_URL}/{SKZ_SPOTIFY_ARTIST_ID}/albums"
+        url = f"{SPOTIFY_ARTIST_URL}/{artist_id}/albums"
         params = {"limit": 50, "include_groups": "album,single,compilation", "market": "US"}
         while url:
             data = self._get(url, params=params)

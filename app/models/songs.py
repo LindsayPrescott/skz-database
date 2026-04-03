@@ -9,6 +9,10 @@ class Song(Base):
 
     id = Column(Integer, primary_key=True)
     title = Column(String(500), nullable=False)
+    # Self-referential: version songs point to their canonical parent
+    parent_song_id = Column(Integer, ForeignKey("songs.id"), nullable=True)
+    # e.g. "Korean", "English", "Hip", "Festival", "Inst."
+    version_label = Column(String(100), nullable=True)
     title_korean = Column(String(500))
     title_romanized = Column(String(500))
     title_japanese = Column(String(500))
@@ -31,6 +35,8 @@ class Song(Base):
     source = Column(String(20), default="manual")
     notes = Column(Text)
 
+    versions = relationship("Song", foreign_keys="[Song.parent_song_id]", back_populates="parent")
+    parent = relationship("Song", foreign_keys="[Song.parent_song_id]", remote_side="[Song.id]", back_populates="versions")
     tracks = relationship("Track", back_populates="song")
     credits = relationship("SongCredit", back_populates="song", cascade="all, delete-orphan")
     chart_entries = relationship("ChartEntry", back_populates="song")

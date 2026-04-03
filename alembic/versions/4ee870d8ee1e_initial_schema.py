@@ -40,6 +40,8 @@ def upgrade() -> None:
     op.create_table('songs',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('title', sa.String(length=500), nullable=False),
+    sa.Column('parent_song_id', sa.Integer(), nullable=True),
+    sa.Column('version_label', sa.String(length=100), nullable=True),
     sa.Column('title_korean', sa.String(length=500), nullable=True),
     sa.Column('title_romanized', sa.String(length=500), nullable=True),
     sa.Column('title_japanese', sa.String(length=500), nullable=True),
@@ -58,6 +60,7 @@ def upgrade() -> None:
     sa.Column('is_verified', sa.Boolean(), nullable=False),
     sa.Column('source', sa.String(length=20), nullable=True),
     sa.Column('notes', sa.Text(), nullable=True),
+    sa.ForeignKeyConstraint(['parent_song_id'], ['songs.id'], ),
     sa.PrimaryKeyConstraint('id'),
     sa.UniqueConstraint('isrc'),
     sa.UniqueConstraint('spotify_id')
