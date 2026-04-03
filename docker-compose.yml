@@ -1,0 +1,35 @@
+services:
+
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"   # Host port 5433 → container port 5432 (5432 taken by native Postgres)
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      LOCAL_DATABASE_URL: ""   # Unset inside Docker — API must use DATABASE_URL (db:5432)
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy   # Waits for Postgres to actually be ready, not just started
+    volumes:
+      - .:/app   # Live code reload during development
+
+volumes:
+  postgres_data:

@@ -1,0 +1,55 @@
+from sqlalchemy import Boolean, Column, Integer, String, Text, ForeignKey
+from sqlalchemy.orm import relationship
+
+from app.models.base import Base
+
+
+class Song(Base):
+    __tablename__ = "songs"
+
+    id = Column(Integer, primary_key=True)
+    title = Column(String(500), nullable=False)
+    title_korean = Column(String(500))
+    title_romanized = Column(String(500))
+    title_japanese = Column(String(500))
+    duration_seconds = Column(Integer)
+    # ISO 639-1: 'ko' | 'en' | 'ja' | 'multi' | 'unknown'
+    language = Column(String(10), default="ko")
+    has_korean_ver = Column(Boolean, nullable=False, default=False)
+    has_english_ver = Column(Boolean, nullable=False, default=False)
+    has_japanese_ver = Column(Boolean, nullable=False, default=False)
+    # released | unreleased | snippet | stage_only | predebut | cover
+    release_status = Column(String(20), nullable=False, default="released")
+    is_instrumental = Column(Boolean, nullable=False, default=False)
+    original_artist = Column(String(300))  # For covers
+    spotify_id = Column(String(100), unique=True)
+    isrc = Column(String(20), unique=True)
+    wikipedia_url = Column(String(500))
+    fandom_url = Column(String(500))
+    is_verified = Column(Boolean, nullable=False, default=False)
+    # 'wikipedia' | 'fandom' | 'spotify' | 'manual'
+    source = Column(String(20), default="manual")
+    notes = Column(Text)
+
+    tracks = relationship("Track", back_populates="song")
+    credits = relationship("SongCredit", back_populates="song", cascade="all, delete-orphan")
+    chart_entries = relationship("ChartEntry", back_populates="song")
+
+
+class Track(Base):
+    """An appearance of a Song on a Release (one song can appear on many releases)."""
+    __tablename__ = "tracks"
+
+    id = Column(Integer, primary_key=True)
+    release_id = Column(Integer, ForeignKey("releases.id"), nullable=False)
+    song_id = Column(Integer, ForeignKey("songs.id"), nullable=False)
+    track_number = Column(Integer)
+    disc_number = Column(Integer, default=1)
+    is_title_track = Column(Boolean, nullable=False, default=False)
+    is_intro = Column(Boolean, nullable=False, default=False)
+    is_outro = Column(Boolean, nullable=False, default=False)
+    is_bonus = Column(Boolean, nullable=False, default=False)
+    version_note = Column(String(200))  # e.g. "Japanese ver.", "Inst."
+
+    release = relationship("Release", back_populates="tracks")
+    song = relationship("Song", back_populates="tracks")

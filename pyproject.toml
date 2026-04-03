@@ -1,0 +1,28 @@
+[project]
+name = "skz-database"
+version = "0.1.0"
+description = "Stray Kids music database"
+authors = [
+    {name = "Lindsay Prescott"}
+]
+requires-python = "^3.12"
+dependencies = [
+    "fastapi (>=0.135.3,<0.136.0)",
+    "uvicorn[standard] (>=0.42.0,<0.43.0)",
+    "sqlalchemy (>=2.0.48,<3.0.0)",
+    "alembic (>=1.18.4,<2.0.0)",
+    "psycopg2-binary (>=2.9.11,<3.0.0)",
+    "pydantic-settings (>=2.13.1,<3.0.0)",
+    "requests (>=2.33.1,<3.0.0)",
+    "beautifulsoup4 (>=4.14.3,<5.0.0)",
+    "lxml (>=6.0.2,<7.0.0)",
+    "mwparserfromhell (>=0.7.2,<0.8.0)",
+    "python-dotenv (>=1.2.2,<2.0.0)",
+    "python-dateutil (>=2.9.0.post0,<3.0.0)",
+    "tqdm (>=4.67.3,<5.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
