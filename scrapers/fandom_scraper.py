@@ -56,8 +56,10 @@ def clean(text: str) -> str:
 
 
 def strip_wikilinks(text: str) -> str:
-    """Convert [[Target|Label]] → Label, [[Target]] → Target."""
+    """Convert [[Target|Label]] → Label, [[Target]] → Target.
+    Also strips any remaining [[ or ]] that weren't part of a valid wikilink."""
     text = re.sub(r"\[\[(?:[^|\]]*\|)?([^\]]+)\]\]", r"\1", text)
+    text = re.sub(r"\[\[|\]\]", "", text)  # Remove unparsed brackets
     return text
 
 
@@ -80,19 +82,24 @@ def resolve_member(name: str) -> int | None:
 
 def extract_member_from_title(title: str) -> tuple[str, int | None]:
     """
-    Many entries are formatted as: 'MemberName "Song Title"'
-    Returns (song_title, artist_id) or (title, None) if no member found.
+    Handles formats:
+      'MemberName "Song Title"'
+      'Member1, Member2 "Song Title"'
+      'MemberName [[Song Title]]'
+    Returns (song_title, artist_id) or (original_title, None) if no member found.
     """
-    # Pattern: word(s) followed by quoted song title
-    match = re.match(r'^([A-Za-z \.]+?)\s+"(.+)"', title)
+    # Pattern: one or more names (possibly comma-separated) followed by quoted title
+    match = re.match(r'^((?:[A-Za-z][A-Za-z \.]*(?:,\s*)?)+?)\s+"([^"]+)"?\s*$', title)
     if match:
-        member_name = match.group(1).strip()
+        member_part = match.group(1).strip().rstrip(",")
         song_title = match.group(2).strip()
-        artist_id = resolve_member(member_name)
-        if artist_id:
-            return song_title, artist_id
-    # Pattern: word(s) followed by wiki-linked song title without quotes
-    match = re.match(r'^([A-Za-z \.]+?)\s+\[\[(.+?)\]\]', title)
+        # Try the last name in a comma list, then the full string
+        for name in [member_part.split(",")[-1].strip(), member_part]:
+            artist_id = resolve_member(name)
+            if artist_id:
+                return song_title, artist_id
+    # Pattern: name(s) followed by wiki-linked title
+    match = re.match(r'^([A-Za-z][A-Za-z ,\.]+?)\s+\[\[(.+?)\]\]', title)
     if match:
         member_name = match.group(1).strip()
         song_title = match.group(2).split("|")[-1].strip()

@@ -159,7 +159,7 @@ def parse_title_cell(cell: Tag) -> str:
     # Remove surrounding quotes (straight and curly) — also catches leading stray quotes
     title = title.strip('"').strip("\u201c\u201d").strip('"').strip()
     # Remove any remaining leading/trailing quote characters left by partial stripping
-    title = re.sub(r'^["\u201c\u201d]+|["\u201d"]+$', "", title).strip()
+    title = re.sub(r'^["\u201c\u201d\u2018\u2019]+|["\u201d\u2019"]+$', "", title).strip()
     return title
 
 
