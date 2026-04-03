@@ -12,6 +12,7 @@ from scrapers.wikipedia_scraper import WikipediaDiscographyScraper
 from scrapers.wikipedia_songs_scraper import WikipediaSongsScraper
 from scrapers.fandom_scraper import FandomScraper
 from scrapers.spotify_scraper import SpotifyScraper
+from scrapers.youtube_scraper import YouTubeScraper
 
 
 def reconcile_singles(db) -> None:
@@ -197,6 +198,9 @@ def main():
 
         print("Phase 5: Spotify enrichment")
         SpotifyScraper().enrich_songs(db)
+
+        print("Phase 6: YouTube MV enrichment")
+        YouTubeScraper().enrich_songs(db)
 
         print("Done.")
     finally:

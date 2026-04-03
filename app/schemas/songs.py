@@ -36,6 +36,7 @@ class SongResponse(SongBase):
     isrc: Optional[str] = None
     wikipedia_url: Optional[str] = None
     fandom_url: Optional[str] = None
+    youtube_url: Optional[str] = None
     is_verified: bool = False
     source: Optional[str] = None
     notes: Optional[str] = None

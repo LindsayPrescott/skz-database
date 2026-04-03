@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.routers import artists, releases, songs, tracks
+from app.routers import artists, charts, releases, songs, tracks
 
 app = FastAPI(
     title="SKZ Database API",
@@ -12,6 +12,7 @@ app.include_router(artists.router)
 app.include_router(releases.router)
 app.include_router(songs.router)
 app.include_router(tracks.router)
+app.include_router(charts.router)
 
 
 @app.get("/health", tags=["health"])

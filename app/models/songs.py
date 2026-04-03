@@ -30,6 +30,7 @@ class Song(Base):
     isrc = Column(String(20), unique=True)
     wikipedia_url = Column(String(500))
     fandom_url = Column(String(500))
+    youtube_url = Column(String(500))
     is_verified = Column(Boolean, nullable=False, default=False)
     # 'wikipedia' | 'fandom' | 'spotify' | 'manual'
     source = Column(String(20), default="manual")
