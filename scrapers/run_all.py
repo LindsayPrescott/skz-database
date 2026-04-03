@@ -4,6 +4,9 @@ Run locally while the Docker DB container is running:
 
   poetry run python scrapers/run_all.py
 """
+import logging
+logging.basicConfig(level=logging.INFO, format="%(message)s")
+
 from app.database import SessionLocal
 from app.models.credits import SongCredit
 from app.models.releases import Release

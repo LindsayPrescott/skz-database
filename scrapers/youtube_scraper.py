@@ -66,11 +66,13 @@ class YouTubeScraper:
             "key": self.api_key,
         })
 
-        if response.status_code == 403:
+        if response.status_code in (400, 403):
             data = response.json()
             errors = data.get("error", {}).get("errors", [])
             if any(e.get("reason") == "quotaExceeded" for e in errors):
                 raise QuotaExceeded("YouTube API daily quota exhausted. Run again tomorrow.")
+            # Log the full error body so we know exactly what went wrong
+            logger.error(f"  YouTube API error {response.status_code}: {data}")
             response.raise_for_status()
 
         response.raise_for_status()

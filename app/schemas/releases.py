@@ -1,6 +1,6 @@
 from datetime import date
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.schemas.tracks import TrackResponse
 
@@ -43,4 +43,11 @@ class ReleaseWithTracksResponse(ReleaseResponse):
 
     The schema below documents the **full** shape.
     """
-    tracks: list[TrackResponse] = []
+    tracks: list[TrackResponse] = Field(
+        default=[],
+        description=(
+            "Inline tracklist. Empty unless ?tracks=summary or ?tracks=full is used. "
+            "summary shape: {track_number, disc_number, is_title_track, version_note, song: {id, title, duration_seconds}}. "
+            "full shape: all track flags + complete nested song with credits."
+        ),
+    )

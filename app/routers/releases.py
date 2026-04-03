@@ -4,7 +4,9 @@ from sqlalchemy.orm import Session, joinedload, subqueryload
 from sqlalchemy import extract
 
 from app.database import get_db
+from app.models.credits import SongCredit
 from app.models.releases import Release
+from app.models.songs import Song, Track as TrackModel
 from app.schemas.pagination import Page
 from app.schemas.releases import ReleaseResponse, ReleaseWithTracksResponse
 from app.schemas.tracks import TrackSummaryResponse, TrackResponse
@@ -77,16 +79,17 @@ def get_release(
         release = db.query(Release).filter(Release.id == release_id).first()
         if not release:
             raise HTTPException(status_code=404, detail="Release not found")
-        return release
+        result = ReleaseWithTracksResponse.model_validate(
+            ReleaseResponse.model_validate(release).model_dump()
+        )
+        result.tracks = []
+        return result
 
     # Eager-load tracks + song (+ credits for full)
-    track_load = joinedload(Release.tracks)
     if tracks == "full":
-        from app.models.songs import Song
-        from app.models.credits import SongCredit
-        track_load = track_load.joinedload("song").subqueryload("credits")
+        track_load = joinedload(Release.tracks).joinedload(TrackModel.song).subqueryload(Song.credits)
     else:
-        track_load = track_load.joinedload("song")
+        track_load = joinedload(Release.tracks).joinedload(TrackModel.song)
 
     release = (
         db.query(Release)
@@ -113,7 +116,7 @@ def get_release(
 def get_release_tracks(release_id: int, db: Session = Depends(get_db)):
     release = (
         db.query(Release)
-        .options(joinedload(Release.tracks).joinedload("song").subqueryload("credits"))
+        .options(joinedload(Release.tracks).joinedload(TrackModel.song).subqueryload(Song.credits))
         .filter(Release.id == release_id)
         .first()
     )

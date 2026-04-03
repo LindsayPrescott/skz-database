@@ -26,3 +26,6 @@ data/raw/
 
 # OS
 .DS_Store
+
+# Project notes
+PROGRESS.md

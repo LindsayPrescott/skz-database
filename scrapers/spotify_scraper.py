@@ -114,15 +114,19 @@ class SpotifyScraper:
         data = self._get(SPOTIFY_SEARCH_URL, params={
             "q": f"artist:{SKZ_ARTIST_NAME}",
             "type": "artist",
-            "limit": 1,
+            "limit": 10,
             "market": "US",
         })
         items = data.get("artists", {}).get("items", [])
-        if not items:
-            raise RuntimeError("Could not find Stray Kids on Spotify")
-        artist_id = items[0]["id"]
-        logger.info(f"  Stray Kids Spotify artist ID: {artist_id}")
-        return artist_id
+        # Find the artist whose name matches exactly (case-insensitive)
+        for item in items:
+            if item["name"].lower() == SKZ_ARTIST_NAME.lower():
+                logger.info(f"  Stray Kids Spotify artist ID: {item['id']}")
+                return item["id"]
+        raise RuntimeError(
+            f"Could not find an artist named '{SKZ_ARTIST_NAME}' in Spotify search results. "
+            f"Got: {[i['name'] for i in items]}"
+        )
 
     def get_artist_albums(self) -> list[dict]:
         """Fetch all albums/EPs/singles for Stray Kids from Spotify."""
