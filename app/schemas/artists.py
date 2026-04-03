@@ -3,13 +3,6 @@ from typing import Optional
 from pydantic import BaseModel
 
 
-class ArtistMemberResponse(BaseModel):
-    parent_artist_id: int
-    child_artist_id: int
-
-    model_config = {"from_attributes": True}
-
-
 class ArtistBase(BaseModel):
     name: str
     name_korean: Optional[str] = None
@@ -31,5 +24,10 @@ class ArtistResponse(ArtistBase):
 
 
 class ArtistWithMembersResponse(ArtistResponse):
-    """Artist response with nested member list (used for units/group)."""
-    memberships: list[ArtistMemberResponse] = []
+    """Artist response with nested member list (used for units/groups).
+
+    `members` contains full artist details for each member, including
+    `is_former_member` so consumers can distinguish current from past members
+    (e.g. Woojin appears here with is_former_member=true).
+    """
+    members: list[ArtistResponse] = []

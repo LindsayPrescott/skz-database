@@ -51,3 +51,51 @@ class ReleaseWithTracksResponse(ReleaseResponse):
             "full shape: all track flags + complete nested song with credits."
         ),
     )
+
+    model_config = {
+        "from_attributes": True,
+        "json_schema_extra": {
+            "example": {
+                "id": 12,
+                "title": "★★★★★ (5-STAR)",
+                "title_korean": "★★★★★",
+                "title_romanized": None,
+                "release_type": "studio_album",
+                "release_date": "2023-06-02",
+                "release_date_precision": "day",
+                "label": "JYP Entertainment",
+                "market": "KR",
+                "catalog_number": None,
+                "formats": None,
+                "artist_id": 1,
+                "wikipedia_url": "https://en.wikipedia.org/wiki/5-Star_(Stray_Kids_album)",
+                "fandom_url": None,
+                "cover_image_url": None,
+                "is_verified": True,
+                "source": "wikipedia",
+                "notes": None,
+                "tracks": [
+                    {
+                        "id": 101,
+                        "track_number": 1,
+                        "disc_number": 1,
+                        "is_title_track": False,
+                        "is_intro": False,
+                        "is_outro": False,
+                        "is_bonus": False,
+                        "version_note": None,
+                        "song": {
+                            "id": 55,
+                            "title": "5-Star",
+                            "duration_seconds": 213,
+                            "spotify_id": "3Qg3S5BytXA5n8rCxJBLYj",
+                            "youtube_url": None,
+                            "parent_song_id": None,
+                            "version_label": None,
+                            "credits": []
+                        }
+                    }
+                ]
+            }
+        }
+    }
