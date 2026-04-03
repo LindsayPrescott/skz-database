@@ -191,14 +191,17 @@ def parse_credit_names(cell: Tag) -> list[str]:
     """
     Split a Lyrics/Composition/Arrangement cell into individual name strings.
     Names are separated by <br> tags.
+
+    Important: split on newlines BEFORE calling clean() — clean() collapses
+    all whitespace including newlines, which would merge multi-name cells like
+    "Bang Chan<br>Changbin<br>Han<br>Versachoi" into one string.
     """
     for br in cell.find_all("br"):
         br.replace_with("\n")
-    raw = clean(cell.get_text())
     names = []
-    for part in raw.split("\n"):
+    for part in cell.get_text().split("\n"):
         part = clean(part)
-        # Strip parenthetical unit notes like "(3RACHA)" from credit names
+        # Strip parenthetical unit notes like "(3RACHA)" or "(KM-Markit)"
         part = re.sub(r"\(.*?\)", "", part).strip()
         if part:
             names.append(part)
@@ -274,9 +277,13 @@ class WikipediaSongsScraper(BaseScraper):
             if existing:
                 skipped += 1
                 logger.debug(f"  Skipping existing: {song_data['title']}")
-                # Backfill wikipedia_url if it was missing (e.g. first scrape ran before this field existed)
+                # Backfill wikipedia_url if it was missing
                 if existing.wikipedia_url is None and song_data.get("fandom_url"):
                     existing.wikipedia_url = song_data["fandom_url"]
+                # Re-insert credits if none exist (e.g. after a credit wipe or first-run bug fix)
+                has_credits = db.query(SongCredit).filter(SongCredit.song_id == existing.id).first()
+                if not has_credits:
+                    self._insert_credits(existing, cells, artist_cache, db)
                 continue
 
             # --- Year ---
