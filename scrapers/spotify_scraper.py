@@ -33,6 +33,11 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+
+class RateLimitExceeded(Exception):
+    """Raised when Spotify asks us to wait longer than MAX_RETRY_WAIT_SECONDS."""
+    pass
+
 SPOTIFY_TOKEN_URL   = "https://accounts.spotify.com/api/token"
 SPOTIFY_SEARCH_URL  = "https://api.spotify.com/v1/search"
 SPOTIFY_ARTIST_URL  = "https://api.spotify.com/v1/artists"
@@ -81,11 +86,20 @@ class SpotifyScraper:
     def _headers(self) -> dict:
         return {"Authorization": f"Bearer {self._get_token()}"}
 
+    # If Spotify asks us to wait longer than this, abort rather than block.
+    MAX_RETRY_WAIT_SECONDS = 120
+
     def _get(self, url: str, params: dict = None, _retries: int = 4) -> dict:
         time.sleep(0.3)
         response = requests.get(url, headers=self._headers(), params=params)
         if response.status_code == 429 and _retries > 0:
             retry_after = int(response.headers.get("Retry-After", 15))
+            if retry_after > self.MAX_RETRY_WAIT_SECONDS:
+                raise RateLimitExceeded(
+                    f"Spotify rate limit too long: {retry_after}s "
+                    f"(max allowed: {self.MAX_RETRY_WAIT_SECONDS}s). "
+                    f"Run again later."
+                )
             logger.warning(f"  Rate limited — waiting {retry_after}s")
             time.sleep(retry_after)
             return self._get(url, params, _retries - 1)
@@ -175,9 +189,18 @@ class SpotifyScraper:
                 in ~30 API calls total.
         Pass 2: Fallback individual search for anything Pass 1 missed
                 (SKZ-Record covers, unreleased that somehow slipped through, etc.)
+
+        If Spotify rate-limits us with a wait longer than MAX_RETRY_WAIT_SECONDS,
+        the run is aborted cleanly. Progress already committed is preserved —
+        re-running will skip already-enriched songs and pick up where it left off.
         """
-        self._album_first_enrichment(db)
-        self._fallback_search_enrichment(db)
+        try:
+            self._album_first_enrichment(db)
+            self._fallback_search_enrichment(db)
+        except RateLimitExceeded as e:
+            db.commit()  # Save whatever progress was made before the limit hit
+            logger.error(f"\nRun aborted: {e}")
+            logger.error("Progress has been saved. Run again once the rate limit clears.")
 
     # -----------------------------------------------------------------------
     # Pass 1: Album-first
