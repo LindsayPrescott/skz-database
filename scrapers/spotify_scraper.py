@@ -204,22 +204,99 @@ class SpotifyScraper:
 
     def enrich_songs(self, db: Session) -> None:
         """
-        Pass 1: Album-first traversal — covers all officially released songs
-                in ~30 API calls total.
-        Pass 2: Fallback individual search for anything Pass 1 missed
-                (SKZ-Record covers, unreleased that somehow slipped through, etc.)
+        Phase 5.0: Discover releases on Spotify not yet in our DB.
+        Pass 1:    Album-first traversal — covers all officially released songs
+                   in ~30 API calls total.
+        Pass 2:    Fallback individual search for anything Pass 1 missed
+                   (SKZ-Record covers, unreleased that somehow slipped through, etc.)
 
         If Spotify rate-limits us with a wait longer than MAX_RETRY_WAIT_SECONDS,
         the run is aborted cleanly. Progress already committed is preserved —
         re-running will skip already-enriched songs and pick up where it left off.
         """
         try:
+            self._discover_missing_releases(db)
             self._album_first_enrichment(db)
             self._fallback_search_enrichment(db)
         except RateLimitExceeded as e:
             db.commit()  # Save whatever progress was made before the limit hit
             logger.error(f"\nRun aborted: {e}")
             logger.error("Progress has been saved. Run again once the rate limit clears.")
+
+    # -----------------------------------------------------------------------
+    # Phase 5.0: Release discovery
+    # -----------------------------------------------------------------------
+
+    # Map Spotify album_type + track count → our release_type
+    _SPOTIFY_TYPE_MAP = {
+        "album": "studio_album",
+        "single": "digital_single",
+        "compilation": "compilation_album",
+    }
+
+    def _discover_missing_releases(self, db: Session) -> None:
+        """
+        Fetch all Stray Kids releases from Spotify's artist/albums endpoint and
+        insert any that aren't already in our releases table.
+
+        This catches releases missing from the main Wikipedia discography page —
+        such as remix EPs, collab singles, or bonus editions — so that the
+        album-first enrichment pass can populate their tracks.
+        """
+        import re
+        from datetime import date
+
+        logger.info("Phase 5.0: Discovering releases missing from the database...")
+
+        sp_albums = self.get_artist_albums()
+
+        # Build normalised title → id map of what we already have
+        existing = {r.title.lower().strip(): r.id for r in db.query(Release).all()}
+
+        new_count = 0
+        for sp_album in sp_albums:
+            title = sp_album["name"]
+            key = title.lower().strip()
+
+            if key in existing:
+                continue
+
+            # Map Spotify album_type to our release_type
+            sp_type = sp_album.get("album_type", "single")
+            release_type = self._SPOTIFY_TYPE_MAP.get(sp_type, "digital_single")
+
+            # Parse release_date — Spotify provides precision alongside the date string
+            raw_date = sp_album.get("release_date", "")
+            precision = sp_album.get("release_date_precision", "day")
+            parsed_date = None
+            try:
+                if precision == "day":
+                    parsed_date = date.fromisoformat(raw_date)
+                elif precision == "month":
+                    y, m = raw_date.split("-")[:2]
+                    parsed_date = date(int(y), int(m), 1)
+                elif precision == "year":
+                    parsed_date = date(int(raw_date), 1, 1)
+            except (ValueError, TypeError):
+                pass
+
+            release = Release(
+                title=title,
+                release_type=release_type,
+                release_date=parsed_date,
+                release_date_precision=precision,
+                market="GLOBAL",
+                source="spotify",
+                is_verified=True,
+            )
+            db.add(release)
+            db.flush()
+            existing[key] = release.id
+            logger.info(f"  New release: {title} ({release_type}, {raw_date or 'no date'})")
+            new_count += 1
+
+        db.commit()
+        logger.info(f"Phase 5.0 complete. {new_count} new release(s) added.")
 
     # -----------------------------------------------------------------------
     # Pass 1: Album-first

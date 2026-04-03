@@ -13,6 +13,7 @@ from app.models.releases import Release
 from app.models.songs import Song, Track
 from scrapers.wikipedia_scraper import WikipediaDiscographyScraper
 from scrapers.wikipedia_songs_scraper import WikipediaSongsScraper
+from scrapers.wikipedia_song_articles_scraper import WikipediaSongArticlesScraper
 from scrapers.fandom_scraper import FandomScraper
 from scrapers.spotify_scraper import SpotifyScraper
 from scrapers.youtube_scraper import YouTubeScraper
@@ -186,6 +187,9 @@ def main():
         WikipediaSongsScraper().scrape_songs(db)
 
         reconcile_singles(db)
+
+        print("Phase 2.6: Wikipedia song article track listings → versions + missing releases")
+        WikipediaSongArticlesScraper().scrape_song_articles(db)
 
         scraper = FandomScraper()
         print("Phase 3: Fandom SKZ-RECORD")

@@ -175,6 +175,8 @@ def parse_song_cell(cell: Tag) -> dict:
 
     # Strip surrounding quotes (straight and curly)
     title = raw.strip('"').strip("\u201c\u201d").strip()
+    # Clean inner quotes around " / " separators: "Title1" / "Title2" → Title1 / Title2
+    title = re.sub(r'["\u201c\u201d]+\s*/\s*["\u201c\u201d]+', ' / ', title)
     result["title"] = title
 
     return result
@@ -272,6 +274,9 @@ class WikipediaSongsScraper(BaseScraper):
             if existing:
                 skipped += 1
                 logger.debug(f"  Skipping existing: {song_data['title']}")
+                # Backfill wikipedia_url if it was missing (e.g. first scrape ran before this field existed)
+                if existing.wikipedia_url is None and song_data.get("fandom_url"):
+                    existing.wikipedia_url = song_data["fandom_url"]
                 continue
 
             # --- Year ---
