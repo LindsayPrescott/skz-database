@@ -156,8 +156,10 @@ def parse_title_cell(cell: Tag) -> str:
     for small in cell.find_all("span", style=lambda s: s and "font-size" in s):
         small.decompose()
     title = clean(cell.get_text())
-    # Remove surrounding quotes if present
-    title = title.strip('"').strip("\u201c\u201d")
+    # Remove surrounding quotes (straight and curly) — also catches leading stray quotes
+    title = title.strip('"').strip("\u201c\u201d").strip('"').strip()
+    # Remove any remaining leading/trailing quote characters left by partial stripping
+    title = re.sub(r'^["\u201c\u201d]+|["\u201d"]+$', "", title).strip()
     return title
 
 
