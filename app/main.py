@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from app.database import AsyncSessionLocal
-from app.routers import artists, charts, collaborators, releases, songs
+from app.routers import router as v1_router
 
 app = FastAPI(
     title="SKZ Database API",
@@ -19,11 +19,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(artists.router)
-app.include_router(collaborators.router)
-app.include_router(releases.router)
-app.include_router(songs.router)
-app.include_router(charts.router)
+app.include_router(v1_router)
 
 
 @app.get("/health", tags=["health"])
