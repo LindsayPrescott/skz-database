@@ -170,8 +170,8 @@ def get_artist_credits(
         limit=limit,
         has_more=skip + limit < total,
         items=[
-            ArtistCreditItem(song=SongResponse.model_validate(song), role=role)
-            for song, role in rows
+            ArtistCreditItem(song=SongResponse.model_validate(song), role=credit_role)
+            for song, credit_role in rows
         ],
     )
 

@@ -5,6 +5,7 @@ from sqlalchemy import extract, nulls_last
 
 from app.constants import Market, ReleaseType
 from app.database import get_db
+from app.models.credits import SongCredit
 from app.models.releases import Release
 from app.models.songs import Song, Track as TrackModel
 from app.schemas.pagination import Page
@@ -77,13 +78,25 @@ def get_release(
 
     # Eager-load tracks + song (+ credits for full)
     if tracks == "full":
-        track_load = joinedload(Release.tracks).joinedload(TrackModel.song).subqueryload(Song.credits)
+        track_load = (
+            joinedload(Release.tracks)
+            .joinedload(TrackModel.song)
+            .subqueryload(Song.credits)
+            .joinedload(SongCredit.artist)
+        )
+        track_load_collab = (
+            joinedload(Release.tracks)
+            .joinedload(TrackModel.song)
+            .subqueryload(Song.credits)
+            .joinedload(SongCredit.collaborator)
+        )
     else:
         track_load = joinedload(Release.tracks).joinedload(TrackModel.song)
 
+    options = [track_load, track_load_collab] if tracks == "full" else [track_load]
     release = (
         db.query(Release)
-        .options(track_load)
+        .options(*options)
         .filter(Release.id == release_id)
         .first()
     )
