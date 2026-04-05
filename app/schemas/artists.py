@@ -2,6 +2,9 @@ from datetime import date
 from typing import Optional
 from pydantic import BaseModel
 
+from app.schemas.pagination import Page
+from app.schemas.releases import ReleaseResponse
+
 
 class ArtistBase(BaseModel):
     name: str
@@ -23,11 +26,16 @@ class ArtistResponse(ArtistBase):
     model_config = {"from_attributes": True}
 
 
+class ArtistReleasesPage(Page[ReleaseResponse]):
+    artist: ArtistResponse
+
+
 class ArtistWithMembersResponse(ArtistResponse):
     """Artist response with nested member list (used for units/groups).
 
-    `members` contains full artist details for each member, including
-    `is_former_member` so consumers can distinguish current from past members
-    (e.g. Woojin appears here with is_former_member=true).
+    By default `members` contains only current members. Pass `?include_former=true`
+    to also include former members (e.g. Woojin with `is_former_member=true`).
+    `member_of` lists the groups/units this artist belongs to.
     """
     members: list[ArtistResponse] = []
+    member_of: list[ArtistResponse] = []
