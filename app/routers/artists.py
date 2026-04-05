@@ -1,15 +1,25 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import nulls_last, or_
+from sqlalchemy import func, nulls_last, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.constants import ArtistType, CreditRole, ReleaseType
 from app.database import get_db
 from app.models.artists import Artist, ArtistMember
+from app.models.collaborators import Collaborator
 from app.models.credits import SongCredit
 from app.models.releases import Release
-from app.models.songs import Track
-from app.schemas.artists import ArtistReleasesPage, ArtistResponse, ArtistWithMembersResponse
+from app.models.songs import Song, Track
+from app.schemas.artists import (
+    ArtistCollaboratorsResponse,
+    ArtistCollaboratorItem,
+    ArtistCreditItem,
+    ArtistCreditsPage,
+    ArtistReleasesPage,
+    ArtistResponse,
+    ArtistWithMembersResponse,
+)
 from app.schemas.pagination import Page
+from app.schemas.songs import SongResponse
 
 router = APIRouter(prefix="/artists", tags=["artists"])
 
@@ -127,4 +137,89 @@ def get_artist_releases(
         limit=limit,
         has_more=skip + limit < total,
         items=items,
+    )
+
+
+@router.get("/{artist_id}/credits", response_model=ArtistCreditsPage)
+def get_artist_credits(
+    artist_id: int,
+    role: list[CreditRole] | None = Query(None, description="Filter by credit role."),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+    db: Session = Depends(get_db),
+):
+    """All songs this artist has a writing or production credit on."""
+    artist = db.query(Artist).filter(Artist.id == artist_id).first()
+    if not artist:
+        raise HTTPException(status_code=404, detail="Artist not found")
+
+    q = (
+        db.query(Song, SongCredit.role)
+        .join(SongCredit, SongCredit.song_id == Song.id)
+        .filter(SongCredit.artist_id == artist_id)
+    )
+    if role:
+        q = q.filter(SongCredit.role.in_(role))
+
+    total = q.count()
+    rows = q.order_by(Song.title).offset(skip).limit(limit).all()
+    return ArtistCreditsPage(
+        artist=ArtistResponse.model_validate(artist),
+        total=total,
+        skip=skip,
+        limit=limit,
+        has_more=skip + limit < total,
+        items=[
+            ArtistCreditItem(song=SongResponse.model_validate(song), role=role)
+            for song, role in rows
+        ],
+    )
+
+
+@router.get("/{artist_id}/collaborators", response_model=ArtistCollaboratorsResponse)
+def get_artist_collaborators(
+    artist_id: int,
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    """Ranked list of artists and collaborators most frequently co-credited with this artist."""
+    artist = db.query(Artist).filter(Artist.id == artist_id).first()
+    if not artist:
+        raise HTTPException(status_code=404, detail="Artist not found")
+
+    artist_song_ids = (
+        db.query(SongCredit.song_id)
+        .filter(SongCredit.artist_id == artist_id)
+        .distinct()
+        .subquery()
+    )
+
+    co_artists = (
+        db.query(Artist.id, Artist.name, func.count(SongCredit.id).label("count"))
+        .join(SongCredit, SongCredit.artist_id == Artist.id)
+        .filter(SongCredit.song_id.in_(artist_song_ids), Artist.id != artist_id)
+        .group_by(Artist.id, Artist.name)
+        .all()
+    )
+
+    co_collaborators = (
+        db.query(Collaborator.id, Collaborator.name, func.count(SongCredit.id).label("count"))
+        .join(SongCredit, SongCredit.collaborator_id == Collaborator.id)
+        .filter(SongCredit.song_id.in_(artist_song_ids))
+        .group_by(Collaborator.id, Collaborator.name)
+        .all()
+    )
+
+    combined = sorted(
+        [ArtistCollaboratorItem(id=r.id, name=r.name, type="artist", co_credit_count=r.count)
+         for r in co_artists] +
+        [ArtistCollaboratorItem(id=r.id, name=r.name, type="collaborator", co_credit_count=r.count)
+         for r in co_collaborators],
+        key=lambda x: x.co_credit_count,
+        reverse=True,
+    )[:limit]
+
+    return ArtistCollaboratorsResponse(
+        artist=ArtistResponse.model_validate(artist),
+        collaborators=combined,
     )

@@ -18,6 +18,7 @@ router = APIRouter(prefix="/releases", tags=["releases"])
 def list_releases(
     release_type: list[ReleaseType] | None = Query(None),
     market: list[Market] | None = Query(None),
+    artist_id: int | None = Query(None, description="Filter by artist ID."),
     year_from: int | None = Query(None, ge=2017, description="Filter releases from this year (inclusive)"),
     year_to: int | None = Query(None, ge=2017, description="Filter releases up to this year (inclusive)"),
     skip: int = Query(0, ge=0),
@@ -29,6 +30,8 @@ def list_releases(
         q = q.filter(Release.release_type.in_(release_type))
     if market:
         q = q.filter(Release.market.in_(market))
+    if artist_id is not None:
+        q = q.filter(Release.artist_id == artist_id)
     if year_from:
         q = q.filter(extract("year", Release.release_date) >= year_from)
     if year_to:
