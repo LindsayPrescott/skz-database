@@ -1,5 +1,5 @@
 from datetime import date
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel
 
 from app.schemas.pagination import Page
@@ -43,7 +43,7 @@ class ArtistCreditsPage(Page[ArtistCreditItem]):
 class ArtistCollaboratorItem(BaseModel):
     id: int
     name: str
-    type: str  # "artist" | "collaborator"
+    type: Literal["artist", "collaborator"]
     co_credit_count: int
 
 
