@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from app.database import SessionLocal
+from app.database import AsyncSessionLocal
 from app.routers import artists, charts, collaborators, releases, songs
 
 app = FastAPI(
@@ -27,11 +27,10 @@ app.include_router(charts.router)
 
 
 @app.get("/health", tags=["health"])
-def health_check():
+async def health_check():
     try:
-        db = SessionLocal()
-        db.execute(text("SELECT 1"))
-        db.close()
+        async with AsyncSessionLocal() as db:
+            await db.execute(text("SELECT 1"))
     except Exception:
         return JSONResponse(status_code=503, content={"status": "unavailable"})
     return {"status": "ok"}

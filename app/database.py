@@ -1,6 +1,6 @@
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.orm import sessionmaker
 
 from app.config import settings
 
@@ -31,15 +31,3 @@ async def get_async_db():
             raise
 
 
-def get_db():
-    """
-    Sync FastAPI dependency. Retained during async migration — removed in Step 6.
-    """
-    db: Session = SessionLocal()
-    try:
-        yield db
-    except:
-        db.rollback()
-        raise
-    finally:
-        db.close()
