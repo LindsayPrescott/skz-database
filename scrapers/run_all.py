@@ -2,8 +2,25 @@
 Orchestrates all scrapers in dependency order.
 Run locally while the Docker DB container is running:
 
-  poetry run python scrapers/run_all.py
+  poetry run python -m scrapers.run_all
+
+Run specific phases:
+
+  poetry run python -m scrapers.run_all --phases youtube
+  poetry run python -m scrapers.run_all --phases fandom dedup-releases dedup-songs
+
+Available phases (run in order when specified):
+  wikipedia           Phase 1  — Wikipedia discography → releases
+  wikipedia-songs     Phase 2  — Wikipedia songs list → songs, tracks, credits
+  reconcile           Phase 2.5 — Link single releases to songs
+  wikipedia-articles  Phase 2.6 — Wikipedia song articles → versions + missing releases
+  fandom              Phase 3  — Fandom SKZ-RECORD, SKZ-PLAYER, unreleased songs
+  dedup-releases      Phase 3.5 — Deduplicate release rows
+  dedup-songs         Phase 4  — Deduplicate song rows
+  spotify             Phase 5  — Spotify enrichment
+  youtube             Phase 6  — YouTube MV enrichment
 """
+import argparse
 import logging
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -275,43 +292,82 @@ def deduplicate_songs(db) -> None:
     print(f"Phase 4 complete. Merged {merged} duplicate song(s).")
 
 
-def main():
+PHASES = [
+    "wikipedia",
+    "wikipedia-songs",
+    "reconcile",
+    "wikipedia-articles",
+    "fandom",
+    "dedup-releases",
+    "dedup-songs",
+    "spotify",
+    "youtube",
+]
+
+
+def run_phases(phases: list[str]) -> None:
     db = SessionLocal()
     try:
-        print("Phase 1: Wikipedia discography → releases")
-        WikipediaDiscographyScraper().scrape_discography(db)
+        if "wikipedia" in phases:
+            print("Phase 1: Wikipedia discography → releases")
+            WikipediaDiscographyScraper().scrape_discography(db)
 
-        print("Phase 2: Wikipedia songs list → songs, tracks, credits")
-        WikipediaSongsScraper().scrape_songs(db)
+        if "wikipedia-songs" in phases:
+            print("Phase 2: Wikipedia songs list → songs, tracks, credits")
+            WikipediaSongsScraper().scrape_songs(db)
 
-        reconcile_singles(db)
+        if "reconcile" in phases:
+            reconcile_singles(db)
 
-        print("Phase 2.6: Wikipedia song article track listings → versions + missing releases")
-        WikipediaSongArticlesScraper().scrape_song_articles(db)
+        if "wikipedia-articles" in phases:
+            print("Phase 2.6: Wikipedia song article track listings → versions + missing releases")
+            WikipediaSongArticlesScraper().scrape_song_articles(db)
 
-        scraper = FandomScraper()
-        print("Phase 3: Fandom SKZ-RECORD")
-        scraper.scrape_skz_record(db)
+        if "fandom" in phases:
+            scraper = FandomScraper()
+            print("Phase 3: Fandom SKZ-RECORD")
+            scraper.scrape_skz_record(db)
+            print("Phase 3: Fandom SKZ-PLAYER")
+            scraper.scrape_skz_player(db)
+            print("Phase 3: Fandom unreleased songs")
+            scraper.scrape_unreleased(db)
 
-        print("Phase 3: Fandom SKZ-PLAYER")
-        scraper.scrape_skz_player(db)
+        if "dedup-releases" in phases:
+            deduplicate_releases(db)
 
-        print("Phase 3: Fandom unreleased songs")
-        scraper.scrape_unreleased(db)
+        if "dedup-songs" in phases:
+            deduplicate_songs(db)
 
-        deduplicate_releases(db)
+        if "spotify" in phases:
+            print("Phase 5: Spotify enrichment")
+            SpotifyScraper().enrich_songs(db)
 
-        deduplicate_songs(db)
-
-        print("Phase 5: Spotify enrichment")
-        SpotifyScraper().enrich_songs(db)
-
-        print("Phase 6: YouTube MV enrichment")
-        YouTubeScraper().enrich_songs(db)
+        if "youtube" in phases:
+            print("Phase 6: YouTube MV enrichment")
+            YouTubeScraper().enrich_songs(db)
 
         print("Done.")
     finally:
         db.close()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Run SKZ database scrapers.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--phases",
+        nargs="+",
+        choices=PHASES,
+        metavar="PHASE",
+        help=(
+            "One or more phases to run. If omitted, all phases run in order. "
+            f"Available: {', '.join(PHASES)}"
+        ),
+    )
+    args = parser.parse_args()
+    run_phases(args.phases if args.phases else PHASES)
 
 
 if __name__ == "__main__":

@@ -125,14 +125,19 @@ API available at `http://localhost:8000`. Interactive docs at `http://localhost:
 
 ## Scraper Pipeline
 
-| Phase | Source | What it populates |
-|---|---|---|
-| 1 | Wikipedia discography page | `releases`, `chart_entries` |
-| 2 | Wikipedia songs list | `songs`, `tracks`, `song_credits` |
-| 2.5 | *(reconciliation)* | Links `digital_single` releases to their songs; fixes stray quote characters in titles |
-| 3 | Stray Kids Fandom Wiki | SKZ-RECORD + SKZ-PLAYER releases/songs, unreleased songs |
-| 4 | *(deduplication)* | Merges case-insensitive duplicate songs created by overlapping Wikipedia + Fandom data |
-| 5 | Spotify Web API | `spotify_id`, `isrc`, `duration_seconds` on songs; creates missing songs from album tracklists |
+| Phase | `--phases` name | Source | What it populates |
+|---|---|---|---|
+| 1 | `wikipedia` | Wikipedia discography page | `releases`, `chart_entries` |
+| 2 | `wikipedia-songs` | Wikipedia songs list | `songs`, `tracks`, `song_credits` |
+| 2.5 | `reconcile` | *(reconciliation)* | Links `digital_single` releases to their songs; fixes stray quote characters in titles |
+| 2.6 | `wikipedia-articles` | Wikipedia individual song articles | Version songs (English, Korean, Japanese vers.) + missing releases |
+| 3 | `fandom` | Stray Kids Fandom Wiki | SKZ-RECORD + SKZ-PLAYER releases/songs, unreleased songs |
+| 3.5 | `dedup-releases` | *(deduplication)* | Merges duplicate release rows created by overlapping Wikipedia + Fandom data |
+| 4 | `dedup-songs` | *(deduplication)* | Merges case-insensitive duplicate songs created by overlapping Wikipedia + Fandom data |
+| 5 | `spotify` | Spotify Web API | `spotify_id`, `isrc`, `duration_seconds` on songs; creates missing songs from album tracklists |
+| 6 | `youtube` | YouTube Data API | `youtube_url` (official MV links) on songs |
+
+Phases run in dependency order regardless of the order `--phases` arguments are given.
 
 ---
 
@@ -223,10 +228,17 @@ poetry run alembic downgrade -1
 
 Migrations run against `LOCAL_DATABASE_URL` (`localhost:5433`) when run from the host. The API container itself never runs migrations automatically.
 
-### Run only Spotify enrichment (after rate limit clears)
+### Run individual phases
 
 ```bash
-poetry run python -m scrapers.run_all
+# Single phase
+poetry run python -m scrapers.run_all --phases youtube
+
+# Custom pipeline
+poetry run python -m scrapers.run_all --phases fandom dedup-releases dedup-songs
+
+# Spotify only (after rate limit clears)
+poetry run python -m scrapers.run_all --phases spotify
 ```
 
-Phases 1–4 are idempotent and will skip existing data automatically.
+All phases are idempotent — already-present data is skipped automatically.
