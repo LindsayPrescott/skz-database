@@ -1,10 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
 from app.constants import Language, ReleaseStatus
 from app.database import get_db
-from app.models.credits import SongCredit
-from app.models.songs import Song
+from app.repositories import SongRepository
 from app.schemas.pagination import Page
 from app.schemas.songs import SongResponse, SongVersionsResponse, SongWithCreditsResponse
 
@@ -20,15 +19,8 @@ def list_songs(
     limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
 ):
-    q = db.query(Song)
-    if status:
-        q = q.filter(Song.release_status == status)
-    if language:
-        q = q.filter(Song.language.in_(language))
-    if not versions:
-        q = q.filter(Song.parent_song_id.is_(None))
-    total = q.count()
-    items = q.order_by(Song.title).offset(skip).limit(limit).all()
+    repo = SongRepository(db)
+    total, items = repo.list(status, language, versions, skip, limit)
     return Page(total=total, skip=skip, limit=limit, has_more=skip + limit < total, items=items)
 
 
@@ -39,30 +31,15 @@ def search_songs(
     limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
 ):
-    term = f"%{q}%"
-    base_q = db.query(Song).filter(
-        Song.title.ilike(term)
-        | Song.title_korean.ilike(term)
-        | Song.title_romanized.ilike(term)
-        | Song.title_japanese.ilike(term)
-    )
-    total = base_q.count()
-    items = base_q.order_by(Song.title).offset(skip).limit(limit).all()
+    repo = SongRepository(db)
+    total, items = repo.search(q, skip, limit)
     return Page(total=total, skip=skip, limit=limit, has_more=skip + limit < total, items=items)
 
 
 @router.get("/{song_id}", response_model=SongWithCreditsResponse)
 def get_song(song_id: int, db: Session = Depends(get_db)):
-    song = (
-        db.query(Song)
-        .options(
-            joinedload(Song.credits).joinedload(SongCredit.artist),
-            joinedload(Song.credits).joinedload(SongCredit.collaborator),
-            joinedload(Song.versions),
-        )
-        .filter(Song.id == song_id)
-        .first()
-    )
+    repo = SongRepository(db)
+    song = repo.get_with_credits(song_id)
     if not song:
         raise HTTPException(status_code=404, detail="Song not found")
     return song
@@ -70,17 +47,10 @@ def get_song(song_id: int, db: Session = Depends(get_db)):
 
 @router.get("/{song_id}/versions", response_model=SongVersionsResponse)
 def get_song_versions(song_id: int, db: Session = Depends(get_db)):
-    song = db.query(Song).filter(Song.id == song_id).first()
-    if not song:
+    repo = SongRepository(db)
+    original, versions = repo.get_version_family(song_id)
+    if not original:
         raise HTTPException(status_code=404, detail="Song not found")
-    parent_id = song.parent_song_id or song.id
-    original = db.query(Song).filter(Song.id == parent_id).first()
-    versions = (
-        db.query(Song)
-        .filter(Song.parent_song_id == parent_id)
-        .order_by(Song.version_label)
-        .all()
-    )
     return SongVersionsResponse(
         original=SongResponse.model_validate(original),
         versions=[SongResponse.model_validate(v) for v in versions],

@@ -1,14 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, nulls_last, or_
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
 from app.constants import ArtistType, CreditRole, ReleaseType
 from app.database import get_db
-from app.models.artists import Artist, ArtistMember
-from app.models.collaborators import Collaborator
-from app.models.credits import SongCredit
-from app.models.releases import Release
-from app.models.songs import Song, Track
+from app.repositories import ArtistRepository
 from app.schemas.artists import (
     ArtistCollaboratorsResponse,
     ArtistCollaboratorItem,
@@ -31,11 +26,8 @@ def list_artists(
     limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
 ):
-    q = db.query(Artist)
-    if artist_type:
-        q = q.filter(Artist.artist_type.in_(artist_type))
-    total = q.count()
-    items = q.order_by(Artist.id).offset(skip).limit(limit).all()
+    repo = ArtistRepository(db)
+    total, items = repo.list(artist_type, skip, limit)
     return Page(total=total, skip=skip, limit=limit, has_more=skip + limit < total, items=items)
 
 
@@ -45,15 +37,8 @@ def get_artist(
     include_former: bool = Query(False, description="Include former members in the response."),
     db: Session = Depends(get_db),
 ):
-    artist = (
-        db.query(Artist)
-        .options(
-            joinedload(Artist.memberships).joinedload(ArtistMember.child),
-            joinedload(Artist.member_of).joinedload(ArtistMember.parent),
-        )
-        .filter(Artist.id == artist_id)
-        .first()
-    )
+    repo = ArtistRepository(db)
+    artist = repo.get_with_memberships(artist_id)
     if not artist:
         raise HTTPException(status_code=404, detail="Artist not found")
 
@@ -96,40 +81,12 @@ def get_artist_releases(
       holds that specific credit role. When role is provided, only credited releases
       are returned — group-attributed releases are excluded.
     """
-    artist = db.query(Artist).filter(Artist.id == artist_id).first()
+    repo = ArtistRepository(db)
+    artist = repo.get(artist_id)
     if not artist:
         raise HTTPException(status_code=404, detail="Artist not found")
 
-    credited_release_ids = (
-        db.query(Track.release_id)
-        .join(SongCredit, SongCredit.song_id == Track.song_id)
-        .filter(SongCredit.artist_id == artist_id)
-    )
-
-    if role:
-        credited_release_ids = credited_release_ids.filter(SongCredit.role.in_(role))
-        q = (
-            db.query(Release)
-            .filter(Release.id.in_(credited_release_ids))
-            .distinct()
-        )
-    else:
-        q = (
-            db.query(Release)
-            .filter(
-                or_(
-                    Release.artist_id == artist_id,
-                    Release.id.in_(credited_release_ids),
-                )
-            )
-            .distinct()
-        )
-
-    if release_type:
-        q = q.filter(Release.release_type.in_(release_type))
-
-    total = q.count()
-    items = q.order_by(nulls_last(Release.release_date.desc())).offset(skip).limit(limit).all()
+    total, items = repo.list_releases(artist_id, release_type, role, skip, limit)
     return ArtistReleasesPage(
         artist=ArtistResponse.model_validate(artist),
         total=total,
@@ -149,20 +106,12 @@ def get_artist_credits(
     db: Session = Depends(get_db),
 ):
     """All songs this artist has a writing or production credit on."""
-    artist = db.query(Artist).filter(Artist.id == artist_id).first()
+    repo = ArtistRepository(db)
+    artist = repo.get(artist_id)
     if not artist:
         raise HTTPException(status_code=404, detail="Artist not found")
 
-    q = (
-        db.query(Song, SongCredit.role)
-        .join(SongCredit, SongCredit.song_id == Song.id)
-        .filter(SongCredit.artist_id == artist_id)
-    )
-    if role:
-        q = q.filter(SongCredit.role.in_(role))
-
-    total = q.count()
-    rows = q.order_by(Song.title).offset(skip).limit(limit).all()
+    total, rows = repo.list_credits(artist_id, role, skip, limit)
     return ArtistCreditsPage(
         artist=ArtistResponse.model_validate(artist),
         total=total,
@@ -183,33 +132,12 @@ def get_artist_collaborators(
     db: Session = Depends(get_db),
 ):
     """Ranked list of artists and collaborators most frequently co-credited with this artist."""
-    artist = db.query(Artist).filter(Artist.id == artist_id).first()
+    repo = ArtistRepository(db)
+    artist = repo.get(artist_id)
     if not artist:
         raise HTTPException(status_code=404, detail="Artist not found")
 
-    artist_song_ids = (
-        db.query(SongCredit.song_id)
-        .filter(SongCredit.artist_id == artist_id)
-        .distinct()
-        .subquery()
-    )
-
-    co_artists = (
-        db.query(Artist.id, Artist.name, func.count(SongCredit.id).label("count"))
-        .join(SongCredit, SongCredit.artist_id == Artist.id)
-        .filter(SongCredit.song_id.in_(artist_song_ids), Artist.id != artist_id)
-        .group_by(Artist.id, Artist.name)
-        .all()
-    )
-
-    co_collaborators = (
-        db.query(Collaborator.id, Collaborator.name, func.count(SongCredit.id).label("count"))
-        .join(SongCredit, SongCredit.collaborator_id == Collaborator.id)
-        .filter(SongCredit.song_id.in_(artist_song_ids))
-        .group_by(Collaborator.id, Collaborator.name)
-        .all()
-    )
-
+    co_artists, co_collaborators = repo.get_collaborators(artist_id)
     combined = sorted(
         [ArtistCollaboratorItem(id=r.id, name=r.name, type="artist", co_credit_count=r.count)
          for r in co_artists] +

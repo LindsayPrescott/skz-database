@@ -1,15 +1,13 @@
-from typing import Literal
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
+from app.constants import ChartRegion
 from app.database import get_db
-from app.models.charts import ChartEntry, ReleaseSales
+from app.repositories import ChartRepository
 from app.schemas.charts import ChartEntryResponse, ReleaseSalesResponse
 from app.schemas.pagination import Page
 
 router = APIRouter(prefix="/charts", tags=["charts"])
-
-ChartRegion = Literal["KR", "JP", "US", "AU", "CA", "FR", "DE", "NZ", "UK", "GLOBAL"]
 
 
 @router.get("/", response_model=Page[ChartEntryResponse])
@@ -22,17 +20,8 @@ def list_chart_entries(
     limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
 ):
-    q = db.query(ChartEntry)
-    if chart_name:
-        q = q.filter(ChartEntry.chart_name.ilike(f"%{chart_name}%"))
-    if region:
-        q = q.filter(ChartEntry.chart_region == region)
-    if release_id:
-        q = q.filter(ChartEntry.release_id == release_id)
-    if song_id:
-        q = q.filter(ChartEntry.song_id == song_id)
-    total = q.count()
-    items = q.order_by(ChartEntry.peak_position).offset(skip).limit(limit).all()
+    repo = ChartRepository(db)
+    total, items = repo.list_entries(chart_name, region, release_id, song_id, skip, limit)
     return Page(total=total, skip=skip, limit=limit, has_more=skip + limit < total, items=items)
 
 
@@ -44,11 +33,6 @@ def list_release_sales(
     limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
 ):
-    q = db.query(ReleaseSales)
-    if release_id:
-        q = q.filter(ReleaseSales.release_id == release_id)
-    if region:
-        q = q.filter(ReleaseSales.region == region)
-    total = q.count()
-    items = q.order_by(ReleaseSales.release_id).offset(skip).limit(limit).all()
+    repo = ChartRepository(db)
+    total, items = repo.list_sales(release_id, region, skip, limit)
     return Page(total=total, skip=skip, limit=limit, has_more=skip + limit < total, items=items)
