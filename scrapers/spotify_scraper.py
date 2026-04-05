@@ -19,6 +19,7 @@ vs. the old approach of ~300 individual searches.
 Does NOT require user login — uses Client ID + Secret only.
 """
 import os
+import re
 import time
 import logging
 
@@ -28,6 +29,7 @@ from sqlalchemy.orm import Session
 
 from app.models.releases import Release
 from app.models.songs import Song, Track
+from scrapers.utils import normalize_title, MEMBER_NAMES, find_song, link_song_to_release
 
 load_dotenv()
 
@@ -133,7 +135,7 @@ class SpotifyScraper:
         artist_id = self.get_artist_id()
         albums = []
         url = f"{SPOTIFY_ARTIST_URL}/{artist_id}/albums"
-        params = {"limit": 50, "include_groups": "album,single,compilation", "market": "US"}
+        params = {"limit": 10, "include_groups": "album,single,compilation"}
         while url:
             data = self._get(url, params=params)
             albums.extend(data.get("items", []))
@@ -145,7 +147,7 @@ class SpotifyScraper:
         """Fetch all tracks for a Spotify album, handling pagination."""
         tracks = []
         url = f"{SPOTIFY_ALBUM_URL}/{spotify_album_id}/tracks"
-        params = {"limit": 50, "market": "US"}
+        params = {"limit": 50}
         while url:
             data = self._get(url, params=params)
             tracks.extend(data.get("items", []))
@@ -161,7 +163,7 @@ class SpotifyScraper:
         results = []
         for i in range(0, len(track_ids), 50):
             batch = track_ids[i:i + 50]
-            data = self._get(SPOTIFY_TRACKS_URL, params={"ids": ",".join(batch), "market": "US"})
+            data = self._get(SPOTIFY_TRACKS_URL, params={"ids": ",".join(batch)})
             results.extend(data.get("tracks", []))
         return results
 
@@ -180,13 +182,50 @@ class SpotifyScraper:
     # Song matching helpers
     # -----------------------------------------------------------------------
 
+    def _strip_member_suffix(self, title: str) -> str | None:
+        """
+        If the title ends with a parenthetical containing only member names,
+        return the base title without it.
+        Handles both comma-separated ("Bang Chan, Changbin, HAN") and
+        ampersand-separated ("Changbin & I.N") name lists.
+        """
+        m = re.match(r"^(.+?)\s*\(([^)]+)\)$", title)
+        if not m:
+            return None
+        base, paren = m.group(1).strip(), m.group(2)
+        # Split on ", " or " & "
+        parts = [p.strip().lower() for p in re.split(r",\s*|\s+&\s+", paren)]
+        if parts and all(p in MEMBER_NAMES for p in parts):
+            return base
+        return None
+
     def _find_song(self, db: Session, title: str, spotify_id: str) -> Song | None:
-        """Find an existing song by spotify_id, exact title, or case-insensitive title."""
-        return (
-            db.query(Song).filter(Song.spotify_id == spotify_id).first()
-            or db.query(Song).filter(Song.title == title).first()
-            or db.query(Song).filter(Song.title.ilike(title)).first()
-        )
+        """
+        Find an existing song by spotify_id or title, with progressive fallbacks:
+          1. Exact spotify_id
+          2. Title lookup via find_song() — handles exact, ilike, and normalisation
+          3. Member-suffix stripped (handles SKZ-REPLAY / MAXIDENT / dominATE naming)
+        """
+        # 1. spotify_id match
+        song = db.query(Song).filter(Song.spotify_id == spotify_id).first()
+        if song:
+            return song
+
+        # 2. Title (find_song handles exact → ilike → normalised)
+        song = find_song(db, title)
+        if song:
+            return song
+
+        # 3. Member-suffix stripping — try both original and normalised base
+        norm = normalize_title(title)
+        for candidate in {title, norm}:
+            base = self._strip_member_suffix(candidate)
+            if base:
+                song = find_song(db, base)
+                if song:
+                    return song
+
+        return None
 
     def _safe_set_isrc(self, db: Session, song: Song, isrc: str) -> None:
         """Set ISRC only if no other song already holds it."""
@@ -327,10 +366,6 @@ class SpotifyScraper:
             if not sp_tracks:
                 continue
 
-            # Fetch full track details in one batch call to get ISRCs
-            track_ids = [t["id"] for t in sp_tracks if t.get("id")]
-            full_tracks = {t["id"]: t for t in self.get_tracks_batch(track_ids) if t}
-
             logger.info(f"  Processing album: {album_title} ({len(sp_tracks)} tracks)")
 
             # Find matching release in our DB
@@ -342,8 +377,11 @@ class SpotifyScraper:
                     continue
                 title = sp_track["name"]
                 duration_s = sp_track["duration_ms"] // 1000
-                full = full_tracks.get(sp_id, {})
-                isrc = full.get("external_ids", {}).get("isrc")
+                # ISRC requires the full track endpoint (/v1/tracks/{id}), which still
+                # works with client credentials, but the batch endpoint (/v1/tracks?ids=)
+                # is now 403. Skipping ISRC in Pass 1 — Pass 2 (search) populates it
+                # for unmatched songs via the full search result object.
+                isrc = None
 
                 song = self._find_song(db, title, sp_id)
 
@@ -374,17 +412,11 @@ class SpotifyScraper:
 
                 # Link to our release if we have one and track isn't already linked
                 if our_release_id:
-                    exists = db.query(Track).filter(
-                        Track.release_id == our_release_id,
-                        Track.song_id == song.id,
-                    ).first()
-                    if not exists:
-                        db.add(Track(
-                            release_id=our_release_id,
-                            song_id=song.id,
-                            track_number=i,
-                            disc_number=sp_track.get("disc_number", 1),
-                        ))
+                    link_song_to_release(
+                        db, song, our_release_id,
+                        track_number=i,
+                        disc_number=sp_track.get("disc_number", 1),
+                    )
 
             db.commit()
 

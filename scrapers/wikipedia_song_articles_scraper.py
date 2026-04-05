@@ -20,7 +20,8 @@ import requests
 from sqlalchemy.orm import Session
 
 from app.models.releases import Release
-from app.models.songs import Song, Track
+from app.models.songs import Song
+from scrapers.utils import find_song, find_release, link_song_to_release
 
 logger = logging.getLogger(__name__)
 
@@ -219,10 +220,7 @@ class WikipediaSongArticlesScraper:
         # Slump as a separate track). Look up the actual parent by title rather than
         # blindly using the article's song.
         if raw_title.lower() != parent_song.title.lower():
-            actual_parent = (
-                db.query(Song).filter(Song.title == raw_title).first()
-                or db.query(Song).filter(Song.title.ilike(raw_title)).first()
-            )
+            actual_parent = find_song(db, raw_title)
             if actual_parent is None:
                 return  # Unknown song title, skip
             effective_parent = actual_parent
@@ -232,7 +230,7 @@ class WikipediaSongArticlesScraper:
         if not version_part:
             # Canonical song — link to the release if we have one, don't create a new Song
             if release_id:
-                self._link_song_to_release(db, effective_parent, release_id, track_position)
+                link_song_to_release(db, effective_parent, release_id, track_number=track_position)
             return
 
         # Parse semicolon-separated version labels: "Hip Hip version; English version"
@@ -260,7 +258,7 @@ class WikipediaSongArticlesScraper:
             db, full_title, version_label, language, effective_parent
         )
         if release_id:
-            self._link_song_to_release(db, song, release_id, track_position)
+            link_song_to_release(db, song, release_id, track_number=track_position)
 
         db.commit()
 
@@ -296,10 +294,7 @@ class WikipediaSongArticlesScraper:
         if any(key.startswith(p) for p in self._SKIP_RELEASE_PREFIXES):
             return None
 
-        existing = (
-            db.query(Release).filter(Release.title == title).first()
-            or db.query(Release).filter(Release.title.ilike(title)).first()
-        )
+        existing = find_release(db, title)
         if existing:
             return existing.id
 
@@ -323,10 +318,7 @@ class WikipediaSongArticlesScraper:
         language: str,
         parent_song: Song,
     ) -> Song:
-        existing = (
-            db.query(Song).filter(Song.title == full_title).first()
-            or db.query(Song).filter(Song.title.ilike(full_title)).first()
-        )
+        existing = find_song(db, full_title)
         if existing:
             return existing
 
@@ -356,16 +348,3 @@ class WikipediaSongArticlesScraper:
         logger.info(f"    New version song: {full_title}")
         return song
 
-    def _link_song_to_release(
-        self, db: Session, song: Song, release_id: int, track_number: int
-    ) -> None:
-        exists = db.query(Track).filter(
-            Track.release_id == release_id,
-            Track.song_id == song.id,
-        ).first()
-        if not exists:
-            db.add(Track(
-                release_id=release_id,
-                song_id=song.id,
-                track_number=track_number,
-            ))

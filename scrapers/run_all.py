@@ -8,6 +8,7 @@ import logging
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 from app.database import SessionLocal
+from app.models.charts import ChartEntry, ReleaseSales
 from app.models.credits import SongCredit
 from app.models.releases import Release
 from app.models.songs import Song, Track
@@ -17,6 +18,7 @@ from scrapers.wikipedia_song_articles_scraper import WikipediaSongArticlesScrape
 from scrapers.fandom_scraper import FandomScraper
 from scrapers.spotify_scraper import SpotifyScraper
 from scrapers.youtube_scraper import YouTubeScraper
+from scrapers.utils import find_song, find_song_by_any_title, link_song_to_release
 
 
 def reconcile_singles(db) -> None:
@@ -57,10 +59,7 @@ def reconcile_singles(db) -> None:
     fixed = 0
     unmatched = []
     for release in singles:
-        song = (
-            db.query(Song).filter(Song.title == release.title).first()
-            or db.query(Song).filter(Song.title.ilike(release.title)).first()
-        )
+        song = find_song(db, release.title)
 
         if not song:
             # Try stripping a version suffix to find the parent song
@@ -68,10 +67,7 @@ def reconcile_singles(db) -> None:
             if m:
                 base_title = m.group(1).strip()
                 version_label = m.group(2).strip()
-                parent = (
-                    db.query(Song).filter(Song.title == base_title).first()
-                    or db.query(Song).filter(Song.title.ilike(base_title)).first()
-                )
+                parent = find_song(db, base_title)
                 if parent:
                     # Create a version Song row linked to the parent
                     song = Song(
@@ -87,8 +83,30 @@ def reconcile_singles(db) -> None:
                     db.flush()
                     print(f"  Version song created: '{release.title}' → parent '{parent.title}'")
 
+        if not song:
+            # Handle compound slash-separated Japanese/Korean/English version singles,
+            # e.g. "Social Path / Super Bowl -Japanese ver.-"
+            #      "Scars / ソリクン -Japanese ver.-"
+            # Strip the language-version suffix, split on "/", look up each part.
+            stripped = re.sub(
+                r"\s+-(?:Japanese|Korean|English)\s+ver\.-\s*$",
+                "", release.title, flags=re.IGNORECASE,
+            ).strip()
+            if stripped != release.title and "/" in stripped:
+                parts = [p.strip() for p in stripped.split("/")]
+                linked_any = False
+                for part in parts:
+                    s = find_song_by_any_title(db, part)
+                    if s:
+                        link_song_to_release(db, s, release.id, is_title_track=True)
+                        linked_any = True
+                        print(f"  Compound link: '{release.title}' → '{s.title}'")
+                if linked_any:
+                    fixed += 1
+                    continue
+
         if song:
-            db.add(Track(release_id=release.id, song_id=song.id, is_title_track=True))
+            link_song_to_release(db, song, release.id, is_title_track=True)
             fixed += 1
         else:
             unmatched.append(release.title)
@@ -97,6 +115,86 @@ def reconcile_singles(db) -> None:
     print(f"  Linked: {fixed} singles | Unmatched: {len(unmatched)}")
     for t in unmatched:
         print(f"    No song match: {t}")
+
+
+def deduplicate_releases(db) -> None:
+    """
+    Phase 3.5: Automatically merge duplicate release rows.
+
+    Before the Fandom scraper dedup check was added, every pipeline run created
+    new skz_record / skz_player releases with the same title.  This collapses
+    those into a single row.
+
+    Strategy:
+      - Group releases by normalised (title, release_type).
+      - Within each group keep the release with the most complete data:
+          1. Prefer releases that have a release_date.
+          2. Then prefer by source: wikipedia > spotify > fandom > manual.
+          3. Then keep the lowest id (earliest created).
+      - Re-point Track, ChartEntry, and ReleaseSales rows to the keeper,
+        skipping any Track that would create a unique-constraint conflict.
+      - Backfill fields the keeper is missing from the duplicate.
+      - Delete the duplicate.
+    """
+    print("Phase 3.5: Deduplicating releases...")
+
+    SOURCE_PRIORITY = {"wikipedia": 0, "spotify": 1, "fandom": 2, "manual": 3}
+
+    all_releases = db.query(Release).order_by(Release.id).all()
+
+    groups: dict[tuple, list] = {}
+    for r in all_releases:
+        key = (r.title.lower().strip(), r.release_type)
+        groups.setdefault(key, []).append(r)
+
+    merged = 0
+    for key, group in groups.items():
+        if len(group) < 2:
+            continue
+
+        def sort_key(r):
+            has_date = 0 if r.release_date else 1
+            priority = SOURCE_PRIORITY.get(r.source or "manual", 3)
+            return (has_date, priority, r.id)
+
+        keeper = sorted(group, key=sort_key)[0]
+        duplicates = [r for r in group if r.id != keeper.id]
+
+        for dup in duplicates:
+            # Migrate Track rows
+            for track in db.query(Track).filter(Track.release_id == dup.id).all():
+                conflict = db.query(Track).filter(
+                    Track.release_id == keeper.id,
+                    Track.song_id == track.song_id,
+                ).first()
+                if conflict:
+                    db.delete(track)
+                else:
+                    track.release_id = keeper.id
+
+            # Migrate ChartEntry rows
+            for entry in db.query(ChartEntry).filter(ChartEntry.release_id == dup.id).all():
+                entry.release_id = keeper.id
+
+            # Migrate ReleaseSales rows
+            for sale in db.query(ReleaseSales).filter(ReleaseSales.release_id == dup.id).all():
+                sale.release_id = keeper.id
+
+            db.flush()
+
+            # Backfill any fields the keeper is missing from the duplicate
+            for field in ("release_date", "release_date_precision", "label", "formats",
+                          "wikipedia_url", "fandom_url", "cover_image_url", "catalog_number"):
+                if getattr(keeper, field) is None and getattr(dup, field) is not None:
+                    setattr(keeper, field, getattr(dup, field))
+
+            print(f"  Merged '{dup.title}' ({dup.release_type}, id={dup.id}, src={dup.source}) "
+                  f"→ keeper id={keeper.id} (src={keeper.source})")
+            db.delete(dup)
+            merged += 1
+
+    db.commit()
+    print(f"Phase 3.5 complete. Merged {merged} duplicate release(s).")
 
 
 def deduplicate_songs(db) -> None:
@@ -200,6 +298,8 @@ def main():
 
         print("Phase 3: Fandom unreleased songs")
         scraper.scrape_unreleased(db)
+
+        deduplicate_releases(db)
 
         deduplicate_songs(db)
 

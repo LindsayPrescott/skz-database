@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from app.models.releases import Release
 from app.models.charts import ChartEntry, ReleaseSales
 from scrapers.base_scraper import BaseScraper
+from scrapers.utils import clean, strip_quotes
 
 logger = logging.getLogger(__name__)
 
@@ -74,13 +75,6 @@ CHART_COLUMN_MAP = {
 # ---------------------------------------------------------------------------
 # Text helpers
 # ---------------------------------------------------------------------------
-
-def clean(text: str) -> str:
-    """Strip footnote markers, extra whitespace, and citation brackets."""
-    text = re.sub(r"\[.*?\]", "", text)   # [1], [A], [note 1]
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
-
 
 def parse_release_date(text: str) -> tuple[date | None, str]:
     """
@@ -156,10 +150,7 @@ def parse_title_cell(cell: Tag) -> str:
     for small in cell.find_all("span", style=lambda s: s and "font-size" in s):
         small.decompose()
     title = clean(cell.get_text())
-    # Remove surrounding quotes (straight and curly) — also catches leading stray quotes
-    title = title.strip('"').strip("\u201c\u201d").strip('"').strip()
-    # Remove any remaining leading/trailing quote characters left by partial stripping
-    title = re.sub(r'^["\u201c\u201d\u2018\u2019]+|["\u201d\u2019"]+$', "", title).strip()
+    title = strip_quotes(title)
     # Remove closing quote embedded before a parenthetical, e.g. 'Fam" (Korean version)'
     title = re.sub(r'["\u201d"]+\s*(?=\()', ' ', title).strip()
     return title

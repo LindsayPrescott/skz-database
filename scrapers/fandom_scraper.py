@@ -20,40 +20,17 @@ from app.models.releases import Release
 from app.models.songs import Song, Track
 from app.models.credits import SongCredit
 from scrapers.base_scraper import BaseScraper
+from scrapers.utils import clean, strip_quotes, MEMBER_ALIASES, resolve_member
 
 logger = logging.getLogger(__name__)
 
 FANDOM_API = "https://stray-kids.fandom.com/api.php"
 SKZ_ARTIST_ID = 1
 
-# Member name → artist_id (reused from songs scraper)
-MEMBER_ALIASES = {
-    "bang chan": 5, "chan": 5, "bangchan": 5,
-    "lee know": 6, "leeknow": 6, "minho": 6,
-    "changbin": 7,
-    "hyunjin": 8,
-    "han": 9, "jisung": 9,
-    "felix": 10,
-    "seungmin": 11,
-    "i.n": 12, "in": 12, "jeongin": 12,
-    "woojin": 13,
-    "3racha": 2,
-    "danceracha": 3, "dance racha": 3,
-    "vocalracha": 4, "vocal racha": 4,
-}
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def clean(text: str) -> str:
-    text = re.sub(r"\[.*?\]", "", text)
-    text = re.sub(r"<ref[^>]*>.*?</ref>", "", text, flags=re.DOTALL)
-    text = re.sub(r"<[^>]+>", "", text)
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
-
 
 def strip_wikilinks(text: str) -> str:
     """Convert [[Target|Label]] → Label, [[Target]] → Target.
@@ -76,10 +53,6 @@ def parse_fandom_date(text: str) -> date | None:
     return None
 
 
-def resolve_member(name: str) -> int | None:
-    return MEMBER_ALIASES.get(name.lower().strip())
-
-
 def extract_member_from_title(title: str) -> tuple[str, int | None]:
     """
     Handles formats:
@@ -88,8 +61,14 @@ def extract_member_from_title(title: str) -> tuple[str, int | None]:
       'MemberName [[Song Title]]'
     Returns (song_title, artist_id) or (original_title, None) if no member found.
     """
-    # Pattern: one or more names (possibly comma-separated) followed by quoted title
-    match = re.match(r'^((?:[A-Za-z][A-Za-z \.]*(?:,\s*)?)+?)\s+"([^"]+)"?\s*$', title)
+    # Pattern: one or more names (possibly comma-separated) followed by quoted title.
+    # Handles both straight (U+0022) and curly (U+201C/U+201D) quote variants from
+    # Fandom wikitext, and allows trailing content after the closing quote
+    # (e.g. " Cover (orig. : Gaho)") so cover entries are parsed before stripping.
+    match = re.match(
+        r'^((?:[A-Za-z][A-Za-z \.]*(?:,\s*)?)+?)\s+["\u201c]([^"\u201d]+)["\u201d]?(?:\s.*)?$',
+        title,
+    )
     if match:
         member_part = match.group(1).strip().rstrip(",")
         song_title = match.group(2).strip()
@@ -184,9 +163,17 @@ class FandomScraper(BaseScraper):
 
             # Clean title further — remove "Cover (orig. : X)" suffix
             song_title = re.sub(r'"?\s*Cover.*$', "", song_title, flags=re.IGNORECASE).strip()
-            song_title = song_title.strip('"').strip()
+            song_title = strip_quotes(song_title)
 
             if not song_title:
+                continue
+
+            # Skip if this release already exists (idempotent re-runs)
+            if db.query(Release).filter(
+                Release.title == song_title,
+                Release.release_type == "skz_record",
+            ).first():
+                logger.debug(f"  Skipping existing SKZ-RECORD: {song_title}")
                 continue
 
             # Create a release for this SKZ-RECORD episode
@@ -267,9 +254,17 @@ class FandomScraper(BaseScraper):
 
             release_date = parse_fandom_date(raw_date)
             song_title, member_artist_id = extract_member_from_title(raw_title)
-            song_title = song_title.strip('"').strip()
+            song_title = strip_quotes(song_title)
 
             if not song_title:
+                continue
+
+            # Skip if this release already exists (idempotent re-runs)
+            if db.query(Release).filter(
+                Release.title == song_title,
+                Release.release_type == "skz_player",
+            ).first():
+                logger.debug(f"  Skipping existing SKZ-PLAYER: {song_title}")
                 continue
 
             release = Release(
@@ -336,7 +331,7 @@ class FandomScraper(BaseScraper):
         inserted = 0
 
         for raw_title, body in sections:
-            title = clean(strip_wikilinks(raw_title)).strip('"').strip()
+            title = strip_quotes(clean(strip_wikilinks(raw_title)))
             if not title:
                 continue
 

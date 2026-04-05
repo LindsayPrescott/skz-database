@@ -19,10 +19,17 @@ from bs4 import BeautifulSoup, Tag
 from sqlalchemy.orm import Session
 
 from app.models.artists import Artist
+from app.models.collaborators import Collaborator
 from app.models.releases import Release
 from app.models.songs import Song, Track
 from app.models.credits import SongCredit
 from scrapers.base_scraper import BaseScraper
+from scrapers.utils import (
+    clean,
+    strip_quotes,
+    normalize_release_title,
+    MEMBER_ALIASES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -54,49 +61,15 @@ SYMBOL_FLAGS = {
 
 
 # ---------------------------------------------------------------------------
-# Text helpers (duplicated from wikipedia_scraper to keep files independent)
-# ---------------------------------------------------------------------------
-
-def clean(text: str) -> str:
-    text = re.sub(r"\[.*?\]", "", text)
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
-
-
-def normalize_title(title: str) -> str:
-    """Lowercase, strip punctuation — used for fuzzy release matching."""
-    return re.sub(r"[^a-z0-9 ]", "", title.lower()).strip()
-
-
-# ---------------------------------------------------------------------------
 # Artist name → DB id cache
 # ---------------------------------------------------------------------------
 
 class ArtistCache:
-    """
-    Loads all artists from DB once, then resolves name strings to IDs.
-    Handles common aliases and romanization variants.
-    """
-
-    ALIASES = {
-        "straykids": 1, "stray kids": 1,
-        "3racha": 2, "three racha": 2,
-        "danceracha": 3, "dance racha": 3,
-        "vocalracha": 4, "vocal racha": 4,
-        "bang chan": 5, "chris": 5, "cb97": 5,
-        "lee know": 6, "leeknow": 6, "minho": 6,
-        "changbin": 7, "seo changbin": 7, "spearb": 7,
-        "hyunjin": 8, "hwang hyunjin": 8,
-        "han": 9, "han jisung": 9, "j.one": 9,
-        "felix": 10, "lee felix": 10,
-        "seungmin": 11, "kim seungmin": 11,
-        "i.n": 12, "in": 12, "yang jeongin": 12,
-        "woojin": 13, "kim woojin": 13,
-    }
+    """Resolves member name strings to artist_ids using the canonical MEMBER_ALIASES map."""
 
     def resolve(self, name: str) -> int | None:
         key = clean(name).lower()
-        return self.ALIASES.get(key)
+        return MEMBER_ALIASES.get(key)
 
 
 # ---------------------------------------------------------------------------
@@ -110,12 +83,12 @@ class ReleaseCache:
         self._norm_map: dict[str, int] = {}
         self._titles: list[str] = []
         for rid, title in rows:
-            norm = normalize_title(title)
+            norm = normalize_release_title(title)
             self._norm_map[norm] = rid
             self._titles.append(norm)
 
     def find(self, raw_title: str) -> int | None:
-        norm = normalize_title(raw_title)
+        norm = normalize_release_title(raw_title)
         if norm in self._norm_map:
             return self._norm_map[norm]
         # Fuzzy fallback — handles minor punctuation differences
@@ -173,8 +146,9 @@ def parse_song_cell(cell: Tag) -> dict:
             result["title_japanese"] = parts[1] if parts[1] else None
         raw = raw[:paren_match.start()].strip()
 
-    # Strip surrounding quotes (straight and curly)
-    title = raw.strip('"').strip("\u201c\u201d").strip()
+    # strip_quotes() handles whitespace-then-quotes so trailing spaces after symbol
+    # removal (e.g. '"The Sound" ') don't block the closing-quote stripper.
+    title = strip_quotes(raw)
     # Clean inner quotes around " / " separators: "Title1" / "Title2" → Title1 / Title2
     title = re.sub(r'["\u201c\u201d]+\s*/\s*["\u201c\u201d]+', ' / ', title)
     result["title"] = title
@@ -331,6 +305,15 @@ class WikipediaSongsScraper(BaseScraper):
         db.commit()
         logger.info(f"Songs scrape complete. Inserted: {inserted}, Skipped (duplicates): {skipped}")
 
+    def _get_or_create_collaborator(self, name: str, db: Session) -> int:
+        """Find or create a Collaborator row for an external credit name. Returns the id."""
+        collab = db.query(Collaborator).filter(Collaborator.name == name).first()
+        if not collab:
+            collab = Collaborator(name=name)
+            db.add(collab)
+            db.flush()
+        return collab.id
+
     def _insert_credits(
         self,
         song: Song,
@@ -346,10 +329,14 @@ class WikipediaSongsScraper(BaseScraper):
                 if not name:
                     continue
                 artist_id = artist_cache.resolve(name)
+                if artist_id:
+                    collaborator_id = None
+                else:
+                    collaborator_id = self._get_or_create_collaborator(name, db)
                 credit = SongCredit(
                     song_id=song.id,
                     artist_id=artist_id,
-                    credit_name_raw=None if artist_id else name,
+                    collaborator_id=collaborator_id,
                     role=role,
                     is_primary=True,
                 )
