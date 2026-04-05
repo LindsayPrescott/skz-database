@@ -57,7 +57,10 @@ Canonical songs with optional version linking. A song that is a Korean, English,
 A `Track` is the join between a `Song` and a `Release` — one song can appear on multiple releases (e.g. on both a single and the album it's included on).
 
 ### Credits
-`song_credits` stores lyricist, composer, and arranger credits per song, linked to an `Artist` row where the credit name is a known member/unit, or stored as a raw string otherwise.
+`song_credits` stores lyricist, composer, and arranger credits per song. Each credit links to either an `Artist` row (for Stray Kids members and units) or a `Collaborator` row (for external contributors like Versachoi, HotSauce, DJ Snake, etc.).
+
+### Collaborators
+External contributors not in the Stray Kids artist roster. Queryable via `/collaborators/{id}/releases`.
 
 ### Charts
 `chart_entries` stores peak chart positions per release, scraped from Wikipedia. `release_sales` stores sales/certification data.
@@ -175,6 +178,13 @@ All list endpoints return a paginated envelope:
 | `GET` | `/songs/{id}` | Song detail with credits and versions |
 | `GET` | `/songs/{id}/versions` | All alternate versions of a song |
 
+### Collaborators
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/collaborators` | List all external collaborators |
+| `GET` | `/collaborators/{id}` | Collaborator detail |
+| `GET` | `/collaborators/{id}/releases` | All releases a collaborator is credited on |
+
 ### Tracks
 | Method | Path | Description |
 |---|---|---|
@@ -198,6 +208,26 @@ poetry run python -m scrapers.run_all
 ```bash
 docker compose up -d --build api
 ```
+
+> Note: `docker compose up -d --build api` does **not** run migrations. Migrations must be applied separately from the host with `poetry run alembic upgrade head` (see below).
+
+### Alembic migrations
+
+```bash
+# Apply all pending migrations (run this after pulling new changes or adding models)
+poetry run alembic upgrade head
+
+# Check current migration state
+poetry run alembic current
+
+# Generate a new migration after changing a model
+poetry run alembic revision --autogenerate -m "describe_the_change"
+
+# Roll back one migration
+poetry run alembic downgrade -1
+```
+
+Migrations run against `LOCAL_DATABASE_URL` (`localhost:5433`) when run from the host. The API container itself never runs migrations automatically.
 
 ### Run only Spotify enrichment (after rate limit clears)
 
