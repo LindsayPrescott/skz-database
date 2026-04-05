@@ -1,4 +1,3 @@
-from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -6,7 +5,7 @@ from app.constants import Market, ReleaseType
 from app.database import get_db
 from app.repositories import ReleaseRepository
 from app.schemas.pagination import Page
-from app.schemas.releases import ReleaseResponse, ReleaseWithTracksResponse
+from app.schemas.releases import ReleaseResponse
 from app.schemas.tracks import TrackSummaryResponse, TrackResponse
 
 router = APIRouter(prefix="/releases", tags=["releases"])
@@ -28,53 +27,25 @@ def list_releases(
     return Page(total=total, skip=skip, limit=limit, has_more=skip + limit < total, items=items)
 
 
-@router.get("/{release_id}", response_model=ReleaseWithTracksResponse)
-def get_release(
-    release_id: int,
-    tracks: Literal["summary", "full"] | None = Query(
-        None,
-        description=(
-            "Include an inline tracklist. "
-            "`summary` returns `{track_number, disc_number, is_title_track, version_note, song: {id, title, duration_seconds}}`. "
-            "`full` returns all track flags plus the complete nested song (all fields + credits). "
-            "Omit to return release metadata only."
-        ),
-    ),
-    db: Session = Depends(get_db),
-):
-    """
-    Get a single release by ID.
-
-    **`?tracks` values:**
-
-    | Value | Track shape |
-    |---|---|
-    | *(omitted)* | No tracks returned |
-    | `summary` | `track_number`, `disc_number`, `is_title_track`, `version_note`, `song: {id, title, duration_seconds}` |
-    | `full` | All track flags + complete nested `song` (all fields including `credits`) |
-
-    The response schema below documents the **`full`** shape.
-    `summary` returns a subset of each track's `song` object.
-    """
-    repo = ReleaseRepository(db)
-
-    if tracks is None:
-        release = repo.get(release_id)
-        if not release:
-            raise HTTPException(status_code=404, detail="Release not found")
-        return ReleaseWithTracksResponse.model_validate(release)
-
-    release = repo.get_with_tracks(release_id, full=(tracks == "full"))
+@router.get("/{release_id}", response_model=ReleaseResponse)
+def get_release(release_id: int, db: Session = Depends(get_db)):
+    release = ReleaseRepository(db).get(release_id)
     if not release:
         raise HTTPException(status_code=404, detail="Release not found")
+    return release
 
-    sorted_tracks = sorted(release.tracks, key=lambda t: (t.disc_number or 1, t.track_number or 0))
 
-    if tracks == "summary":
-        track_data = [TrackSummaryResponse.model_validate(t) for t in sorted_tracks]
-    else:
-        track_data = [TrackResponse.model_validate(t) for t in sorted_tracks]
+@router.get("/{release_id}/tracks", response_model=list[TrackResponse])
+def get_release_tracks(release_id: int, db: Session = Depends(get_db)):
+    release = ReleaseRepository(db).get_with_tracks(release_id, full=True)
+    if not release:
+        raise HTTPException(status_code=404, detail="Release not found")
+    return sorted(release.tracks, key=lambda t: (t.disc_number or 1, t.track_number or 0))
 
-    result = ReleaseWithTracksResponse.model_validate(release)
-    result.tracks = track_data
-    return result
+
+@router.get("/{release_id}/tracks/summary", response_model=list[TrackSummaryResponse])
+def get_release_tracks_summary(release_id: int, db: Session = Depends(get_db)):
+    release = ReleaseRepository(db).get_with_tracks(release_id, full=False)
+    if not release:
+        raise HTTPException(status_code=404, detail="Release not found")
+    return sorted(release.tracks, key=lambda t: (t.disc_number or 1, t.track_number or 0))
