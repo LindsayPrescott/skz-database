@@ -11,7 +11,7 @@ Data is scraped from Wikipedia, the Stray Kids Fandom Wiki, and Spotify.
 | Layer | Technology |
 |---|---|
 | API | FastAPI |
-| ORM | SQLAlchemy (sync) |
+| ORM | SQLAlchemy (async) |
 | Database | PostgreSQL 16 |
 | Migrations | Alembic |
 | Package manager | Poetry |
@@ -27,8 +27,10 @@ skz-database/
 │   ├── models/          # SQLAlchemy ORM models
 │   ├── schemas/         # Pydantic response schemas
 │   ├── routers/         # FastAPI route handlers
+│   ├── repositories/    # SQLAlchemy query logic (one class per model group)
+│   ├── constants.py     # Shared enum literals (ReleaseType, CreditRole, etc.)
 │   ├── config.py        # Pydantic Settings (reads .env)
-│   ├── database.py      # Engine + session factory
+│   ├── database.py      # Async engine + session factory
 │   └── main.py          # FastAPI app + router registration
 ├── scrapers/
 │   ├── run_all.py       # Orchestrator: runs all phases in order
@@ -48,7 +50,7 @@ skz-database/
 Stray Kids (group), sub-units, and members seeded via Alembic — see [`alembic/versions/b6a411184eed_seed_artists.py`](alembic/versions/b6a411184eed_seed_artists.py) for the full list. Artist hierarchy is stored in a self-referential `artist_members` join table.
 
 ### Releases
-Every official release — studio albums, EPs, single albums, digital singles, repackages, mixtapes, SKZ-RECORD episodes, SKZ-PLAYER episodes, and features. For the full list of valid `release_type` values see the `ReleaseType` literal in [`app/routers/releases.py`](app/routers/releases.py).
+Every official release — studio albums, EPs, single albums, digital singles, repackages, mixtapes, and features. For the full list of valid `release_type` values see `ReleaseType` in [`app/constants.py`](app/constants.py). SKZ-RECORD and SKZ-PLAYER are stored as `digital_single` with a `release_subtype` of `"skz_record"` / `"skz_player"` respectively.
 
 ### Songs
 Canonical songs with optional version linking. A song that is a Korean, English, Hip, or Festival version of another song has `parent_song_id` set to the canonical song's ID and a `version_label` (e.g. `"Korean"`, `"English"`).
@@ -160,19 +162,19 @@ All list endpoints return a paginated envelope:
 ### Artists
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/artists` | List all artists |
-| `GET` | `/artists/{id}` | Artist detail with members |
-| `GET` | `/artists/{id}/releases` | All releases for an artist |
+| `GET` | `/artists` | List all artists — filter by `artist_type[]` |
+| `GET` | `/artists/{id}` | Artist detail with members — `?include_former=true` |
+| `GET` | `/artists/{id}/releases` | All releases for an artist — filter by `release_type[]`, `role[]` |
+| `GET` | `/artists/{id}/credits` | All songs this artist has a writing/production credit on |
+| `GET` | `/artists/{id}/collaborators` | Ranked list of most frequent co-credits |
 
 ### Releases
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/releases` | List releases — filter by `release_type[]`, `market[]` |
-| `GET` | `/releases/{id}` | Release detail — optional `?tracks=summary\|full` |
-
-**`?tracks` values on `/releases/{id}`:**
-- `summary` — adds `{track_number, disc_number, is_title_track, version_note, song: {id, title, duration_seconds}}`
-- `full` — adds all track flags + complete nested song (all fields including credits)
+| `GET` | `/releases/{id}` | Release detail |
+| `GET` | `/releases/{id}/tracks` | Full tracklist with credits |
+| `GET` | `/releases/{id}/tracks/summary` | Tracklist with title and track number only |
 
 ### Songs
 | Method | Path | Description |
