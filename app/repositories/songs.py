@@ -66,6 +66,7 @@ class SongRepository:
         return result.unique().scalar_one_or_none()
 
     async def get_version_family(self, song_id: int) -> tuple[Song | None, list[Song]]:
+        # First query: resolve the parent ID (need the song's own parent_song_id to know it).
         song_result = await self.db.execute(select(Song).where(Song.id == song_id))
         song = song_result.scalar_one_or_none()
         if not song:
@@ -73,11 +74,14 @@ class SongRepository:
 
         parent_id = song.parent_song_id or song.id
 
-        original_result = await self.db.execute(select(Song).where(Song.id == parent_id))
-        original = original_result.scalar_one_or_none()
-
-        versions_result = await self.db.execute(
-            select(Song).where(Song.parent_song_id == parent_id).order_by(Song.version_label)
+        # Second query: fetch the whole family in one round-trip, split in Python.
+        family_result = await self.db.execute(
+            select(Song)
+            .where(or_(Song.id == parent_id, Song.parent_song_id == parent_id))
+            .order_by(Song.version_label)
         )
-        versions = versions_result.scalars().all()
+        family = family_result.scalars().all()
+
+        original = next((s for s in family if s.id == parent_id), None)
+        versions = [s for s in family if s.id != parent_id]
         return original, versions
