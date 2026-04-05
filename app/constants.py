@@ -14,3 +14,7 @@ CreditRole = Literal[
 ]
 
 ArtistType = Literal["group", "unit", "member"]
+
+ReleaseStatus = Literal["released", "unreleased", "snippet", "stage_only", "predebut", "cover"]
+
+Language = Literal["ko", "en", "ja", "multi", "unknown"]

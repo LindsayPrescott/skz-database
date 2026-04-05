@@ -1,21 +1,20 @@
-from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 
+from app.constants import Language, ReleaseStatus
 from app.database import get_db
+from app.models.credits import SongCredit
 from app.models.songs import Song
 from app.schemas.pagination import Page
-from app.schemas.songs import SongResponse, SongWithCreditsResponse, SongCreditResponse
+from app.schemas.songs import SongResponse, SongWithCreditsResponse
 
 router = APIRouter(prefix="/songs", tags=["songs"])
-
-
-ReleaseStatus = Literal["released", "unreleased", "snippet", "stage_only", "predebut", "cover"]
 
 
 @router.get("/", response_model=Page[SongResponse])
 def list_songs(
     status: ReleaseStatus | None = Query(None),
+    language: list[Language] | None = Query(None, description="Filter by language."),
     versions: bool = Query(False, description="Include version songs (parent_song_id is set). Default: canonical songs only."),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
@@ -24,6 +23,8 @@ def list_songs(
     q = db.query(Song)
     if status:
         q = q.filter(Song.release_status == status)
+    if language:
+        q = q.filter(Song.language.in_(language))
     if not versions:
         q = q.filter(Song.parent_song_id.is_(None))
     total = q.count()
@@ -43,6 +44,7 @@ def search_songs(
         Song.title.ilike(term)
         | Song.title_korean.ilike(term)
         | Song.title_romanized.ilike(term)
+        | Song.title_japanese.ilike(term)
     )
     total = base_q.count()
     items = base_q.order_by(Song.title).offset(skip).limit(limit).all()
@@ -53,7 +55,11 @@ def search_songs(
 def get_song(song_id: int, db: Session = Depends(get_db)):
     song = (
         db.query(Song)
-        .options(joinedload(Song.credits), joinedload(Song.versions))
+        .options(
+            joinedload(Song.credits).joinedload(SongCredit.artist),
+            joinedload(Song.credits).joinedload(SongCredit.collaborator),
+            joinedload(Song.versions),
+        )
         .filter(Song.id == song_id)
         .first()
     )
