@@ -39,7 +39,7 @@ class Song(Base):
     versions = relationship("Song", foreign_keys="[Song.parent_song_id]", back_populates="parent")
     parent = relationship("Song", foreign_keys="[Song.parent_song_id]", remote_side="[Song.id]", back_populates="versions")
     tracks = relationship("Track", back_populates="song")
-    credits = relationship("SongCredit", back_populates="song", cascade="all, delete-orphan")
+    credits = relationship("SongCredit", back_populates="song", cascade="all, delete-orphan", order_by="SongCredit.role")
     chart_entries = relationship("ChartEntry", back_populates="song")
 
 

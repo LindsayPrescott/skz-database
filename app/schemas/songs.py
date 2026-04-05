@@ -2,10 +2,27 @@ from typing import Optional
 from pydantic import BaseModel
 
 
+class CreditedArtistResponse(BaseModel):
+    """Minimal artist shape used inside credit listings to avoid circular imports."""
+    id: int
+    name: str
+    artist_type: str
+
+    model_config = {"from_attributes": True}
+
+
+class CreditedCollaboratorResponse(BaseModel):
+    """Minimal collaborator shape used inside credit listings."""
+    id: int
+    name: str
+
+    model_config = {"from_attributes": True}
+
+
 class SongCreditResponse(BaseModel):
     id: int
-    artist_id: Optional[int] = None
-    credit_name_raw: Optional[str] = None
+    artist: Optional[CreditedArtistResponse] = None
+    collaborator: Optional[CreditedCollaboratorResponse] = None
     role: str
     is_primary: bool = True
     notes: Optional[str] = None

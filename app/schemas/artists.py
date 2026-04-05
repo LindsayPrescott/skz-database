@@ -35,7 +35,7 @@ class ArtistWithMembersResponse(ArtistResponse):
 
     By default `members` contains only current members. Pass `?include_former=true`
     to also include former members (e.g. Woojin with `is_former_member=true`).
-    `member_of` lists the groups/units this artist belongs to.
+    `groups` lists the groups/units this artist belongs to.
     """
     members: list[ArtistResponse] = []
-    member_of: list[ArtistResponse] = []
+    groups: list[ArtistResponse] = []

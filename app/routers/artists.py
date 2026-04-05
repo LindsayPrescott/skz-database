@@ -63,7 +63,7 @@ def get_artist(
         for m in artist.memberships
         if include_former or not m.child.is_former_member
     ]
-    result.member_of = [
+    result.groups = [
         ArtistResponse.model_validate(m.parent)
         for m in artist.member_of
     ]
