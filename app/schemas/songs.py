@@ -64,3 +64,8 @@ class SongResponse(SongBase):
 class SongWithCreditsResponse(SongResponse):
     credits: list[SongCreditResponse] = []
     versions: list[SongResponse] = []
+
+
+class SongVersionsResponse(BaseModel):
+    original: SongResponse
+    versions: list[SongResponse] = []

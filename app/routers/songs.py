@@ -6,7 +6,7 @@ from app.database import get_db
 from app.models.credits import SongCredit
 from app.models.songs import Song
 from app.schemas.pagination import Page
-from app.schemas.songs import SongResponse, SongWithCreditsResponse
+from app.schemas.songs import SongResponse, SongVersionsResponse, SongWithCreditsResponse
 
 router = APIRouter(prefix="/songs", tags=["songs"])
 
@@ -68,16 +68,20 @@ def get_song(song_id: int, db: Session = Depends(get_db)):
     return song
 
 
-@router.get("/{song_id}/versions", response_model=list[SongResponse])
+@router.get("/{song_id}/versions", response_model=SongVersionsResponse)
 def get_song_versions(song_id: int, db: Session = Depends(get_db)):
     song = db.query(Song).filter(Song.id == song_id).first()
     if not song:
         raise HTTPException(status_code=404, detail="Song not found")
-    # Return versions of this song, or versions of its parent if this is itself a version
     parent_id = song.parent_song_id or song.id
-    return (
+    original = db.query(Song).filter(Song.id == parent_id).first()
+    versions = (
         db.query(Song)
-        .filter(Song.parent_song_id == parent_id, Song.id != song_id)
+        .filter(Song.parent_song_id == parent_id)
         .order_by(Song.version_label)
         .all()
+    )
+    return SongVersionsResponse(
+        original=SongResponse.model_validate(original),
+        versions=[SongResponse.model_validate(v) for v in versions],
     )
