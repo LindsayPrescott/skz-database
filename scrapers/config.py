@@ -76,3 +76,7 @@ SKZ_CONFIG = GroupConfig(
         "seungmin", "i.n", "minho", "jisung", "chris",
     }),
 )
+
+GROUP_CONFIGS = {
+    "skz": SKZ_CONFIG,
+}

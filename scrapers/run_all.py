@@ -25,7 +25,7 @@ import logging
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 from app.database import SessionLocal
-from scrapers.config import SKZ_CONFIG
+from scrapers.config import GROUP_CONFIGS, SKZ_CONFIG
 from app.models.charts import ChartEntry, ReleaseSales
 from app.models.credits import SongCredit
 from app.models.releases import Release
@@ -306,16 +306,16 @@ PHASES = [
 ]
 
 
-def run_phases(phases: list[str]) -> None:
+def run_phases(phases: list[str], config=SKZ_CONFIG) -> None:
     db = SessionLocal()
     try:
         if "wikipedia" in phases:
             print("Phase 1: Wikipedia discography → releases")
-            WikipediaDiscographyScraper(SKZ_CONFIG).scrape_discography(db)
+            WikipediaDiscographyScraper(config).scrape_discography(db)
 
         if "wikipedia-songs" in phases:
             print("Phase 2: Wikipedia songs list → songs, tracks, credits")
-            WikipediaSongsScraper(SKZ_CONFIG).scrape_songs(db)
+            WikipediaSongsScraper(config).scrape_songs(db)
 
         if "reconcile" in phases:
             reconcile_singles(db)
@@ -325,7 +325,7 @@ def run_phases(phases: list[str]) -> None:
             WikipediaSongArticlesScraper().scrape_song_articles(db)
 
         if "fandom" in phases:
-            scraper = FandomScraper(SKZ_CONFIG)
+            scraper = FandomScraper(config)
             print("Phase 3: Fandom SKZ-RECORD")
             scraper.scrape_skz_record(db)
             print("Phase 3: Fandom SKZ-PLAYER")
@@ -341,11 +341,11 @@ def run_phases(phases: list[str]) -> None:
 
         if "spotify" in phases:
             print("Phase 5: Spotify enrichment")
-            SpotifyScraper(SKZ_CONFIG).enrich_songs(db)
+            SpotifyScraper(config).enrich_songs(db)
 
         if "youtube" in phases:
             print("Phase 6: YouTube MV enrichment")
-            YouTubeScraper(SKZ_CONFIG).enrich_songs(db)
+            YouTubeScraper(config).enrich_songs(db)
 
         print("Done.")
     finally:
@@ -358,6 +358,15 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
+        "--group",
+        choices=list(GROUP_CONFIGS.keys()),
+        default="skz",
+        help=(
+            "Which group to run the pipeline for. "
+            f"Available: {', '.join(GROUP_CONFIGS.keys())}. Default: skz"
+        ),
+    )
+    parser.add_argument(
         "--phases",
         nargs="+",
         choices=PHASES,
@@ -368,7 +377,8 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
-    run_phases(args.phases if args.phases else PHASES)
+    config = GROUP_CONFIGS[args.group]
+    run_phases(args.phases if args.phases else PHASES, config)
 
 
 if __name__ == "__main__":
