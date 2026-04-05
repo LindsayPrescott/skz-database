@@ -164,7 +164,6 @@ All list endpoints return a paginated envelope:
 |---|---|---|
 | `GET` | `/releases` | List releases — filter by `release_type[]`, `market[]` |
 | `GET` | `/releases/{id}` | Release detail — optional `?tracks=summary\|full` |
-| `GET` | `/releases/{id}/tracks` | Full tracklist for a release |
 
 **`?tracks` values on `/releases/{id}`:**
 - `summary` — adds `{track_number, disc_number, is_title_track, version_note, song: {id, title, duration_seconds}}`
@@ -174,7 +173,7 @@ All list endpoints return a paginated envelope:
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/songs` | List songs — filter by `status`, `?versions=true` to include version songs |
-| `GET` | `/songs/search?q=` | Search by title (English, Korean, romanized) |
+| `GET` | `/songs/search?q=` | Search by title (English, Korean, romanized, Japanese) |
 | `GET` | `/songs/{id}` | Song detail with credits and versions |
 | `GET` | `/songs/{id}/versions` | All alternate versions of a song |
 
@@ -184,11 +183,6 @@ All list endpoints return a paginated envelope:
 | `GET` | `/collaborators` | List all external collaborators |
 | `GET` | `/collaborators/{id}` | Collaborator detail |
 | `GET` | `/collaborators/{id}/releases` | All releases a collaborator is credited on |
-
-### Tracks
-| Method | Path | Description |
-|---|---|---|
-| `GET` | `/tracks/{id}` | Single track detail |
 
 ---
 
