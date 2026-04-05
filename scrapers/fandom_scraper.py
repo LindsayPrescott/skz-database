@@ -171,7 +171,7 @@ class FandomScraper(BaseScraper):
             # Skip if this release already exists (idempotent re-runs)
             if db.query(Release).filter(
                 Release.title == song_title,
-                Release.release_type == "skz_record",
+                Release.release_subtype == "skz_record",
             ).first():
                 logger.debug(f"  Skipping existing SKZ-RECORD: {song_title}")
                 continue
@@ -179,7 +179,8 @@ class FandomScraper(BaseScraper):
             # Create a release for this SKZ-RECORD episode
             release = Release(
                 title=song_title,
-                release_type="skz_record",
+                release_type="digital_single",
+                release_subtype="skz_record",
                 release_date=release_date,
                 release_date_precision="day" if release_date else "year",
                 artist_id=member_artist_id or SKZ_ARTIST_ID,
@@ -262,14 +263,15 @@ class FandomScraper(BaseScraper):
             # Skip if this release already exists (idempotent re-runs)
             if db.query(Release).filter(
                 Release.title == song_title,
-                Release.release_type == "skz_player",
+                Release.release_subtype == "skz_player",
             ).first():
                 logger.debug(f"  Skipping existing SKZ-PLAYER: {song_title}")
                 continue
 
             release = Release(
                 title=song_title,
-                release_type="skz_player",
+                release_type="digital_single",
+                release_subtype="skz_player",
                 release_date=release_date,
                 release_date_precision="day" if release_date else "year",
                 artist_id=member_artist_id or SKZ_ARTIST_ID,

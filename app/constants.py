@@ -3,7 +3,6 @@ from typing import Literal
 ReleaseType = Literal[
     "studio_album", "ep", "single_album", "compilation_album",
     "repackage", "mixtape", "digital_single", "feature",
-    "skz_record", "skz_player",
 ]
 
 Market = Literal["KR", "JP", "US", "GLOBAL"]

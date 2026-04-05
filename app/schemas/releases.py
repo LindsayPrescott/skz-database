@@ -8,6 +8,7 @@ class ReleaseBase(BaseModel):
     title_korean: Optional[str] = None
     title_romanized: Optional[str] = None
     release_type: str
+    release_subtype: Optional[str] = None
     release_date: Optional[date] = None
     release_date_precision: str = "day"
     label: Optional[str] = None

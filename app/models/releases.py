@@ -12,8 +12,10 @@ class Release(Base):
     title_korean = Column(String(500))
     title_romanized = Column(String(500))
     # studio_album | compilation_album | repackage | ep | single_album |
-    # digital_single | mixtape | skz_record | skz_player | ost | feature | predebut
+    # digital_single | mixtape | ost | feature | predebut
     release_type = Column(String(30), nullable=False)
+    # Group-specific sub-classification (e.g. 'skz_record', 'skz_player')
+    release_subtype = Column(String(30), nullable=True)
     release_date = Column(Date)
     # 'year' | 'month' | 'day' — how precise the release_date is
     release_date_precision = Column(String(10), default="day")
