@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-from sqlalchemy import func, nulls_last, or_
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func, nulls_last, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
 from app.models.artists import Artist, ArtistMember
 from app.models.collaborators import Collaborator
@@ -11,34 +12,39 @@ from app.models.songs import Song, Track
 
 
 class ArtistRepository:
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
-    def list(
+    async def list(
         self, artist_type: list[str] | None, skip: int, limit: int
     ) -> tuple[int, list[Artist]]:
-        q = self.db.query(Artist)
+        q = select(Artist)
         if artist_type:
-            q = q.filter(Artist.artist_type.in_(artist_type))
-        total = q.count()
-        items = q.order_by(Artist.id).offset(skip).limit(limit).all()
+            q = q.where(Artist.artist_type.in_(artist_type))
+
+        total_result = await self.db.execute(select(func.count()).select_from(q.subquery()))
+        total = total_result.scalar()
+
+        items_result = await self.db.execute(q.order_by(Artist.id).offset(skip).limit(limit))
+        items = items_result.scalars().all()
         return total, items
 
-    def get_with_memberships(self, artist_id: int) -> Artist | None:
-        return (
-            self.db.query(Artist)
+    async def get_with_memberships(self, artist_id: int) -> Artist | None:
+        result = await self.db.execute(
+            select(Artist)
             .options(
                 joinedload(Artist.memberships).joinedload(ArtistMember.child),
                 joinedload(Artist.member_of).joinedload(ArtistMember.parent),
             )
-            .filter(Artist.id == artist_id)
-            .first()
+            .where(Artist.id == artist_id)
         )
+        return result.unique().scalar_one_or_none()
 
-    def get(self, artist_id: int) -> Artist | None:
-        return self.db.query(Artist).filter(Artist.id == artist_id).first()
+    async def get(self, artist_id: int) -> Artist | None:
+        result = await self.db.execute(select(Artist).where(Artist.id == artist_id))
+        return result.scalar_one_or_none()
 
-    def list_releases(
+    async def list_releases(
         self,
         artist_id: int,
         release_type: list[str] | None,
@@ -46,32 +52,36 @@ class ArtistRepository:
         skip: int,
         limit: int,
     ) -> tuple[int, list[Release]]:
-        credited_release_ids = (
-            self.db.query(Track.release_id)
+        credited_subq = (
+            select(Track.release_id)
             .join(SongCredit, SongCredit.song_id == Track.song_id)
-            .filter(SongCredit.artist_id == artist_id)
+            .where(SongCredit.artist_id == artist_id)
         )
         if role:
-            credited_release_ids = credited_release_ids.filter(SongCredit.role.in_(role))
-            q = self.db.query(Release).filter(Release.id.in_(credited_release_ids)).distinct()
+            credited_subq = credited_subq.where(SongCredit.role.in_(role))
+        credited_subq = credited_subq.scalar_subquery()
+
+        if role:
+            q = select(Release).where(Release.id.in_(credited_subq)).distinct()
         else:
             q = (
-                self.db.query(Release)
-                .filter(
-                    or_(
-                        Release.artist_id == artist_id,
-                        Release.id.in_(credited_release_ids),
-                    )
-                )
+                select(Release)
+                .where(or_(Release.artist_id == artist_id, Release.id.in_(credited_subq)))
                 .distinct()
             )
         if release_type:
-            q = q.filter(Release.release_type.in_(release_type))
-        total = q.count()
-        items = q.order_by(nulls_last(Release.release_date.desc())).offset(skip).limit(limit).all()
+            q = q.where(Release.release_type.in_(release_type))
+
+        total_result = await self.db.execute(select(func.count()).select_from(q.subquery()))
+        total = total_result.scalar()
+
+        items_result = await self.db.execute(
+            q.order_by(nulls_last(Release.release_date.desc())).offset(skip).limit(limit)
+        )
+        items = items_result.scalars().all()
         return total, items
 
-    def list_credits(
+    async def list_credits(
         self,
         artist_id: int,
         role: list[str] | None,
@@ -79,37 +89,49 @@ class ArtistRepository:
         limit: int,
     ) -> tuple[int, list[tuple[Song, str]]]:
         q = (
-            self.db.query(Song, SongCredit.role)
+            select(Song, SongCredit.role)
             .join(SongCredit, SongCredit.song_id == Song.id)
-            .filter(SongCredit.artist_id == artist_id)
+            .where(SongCredit.artist_id == artist_id)
         )
         if role:
-            q = q.filter(SongCredit.role.in_(role))
-        total = q.count()
-        rows = q.order_by(Song.title).offset(skip).limit(limit).all()
+            q = q.where(SongCredit.role.in_(role))
+
+        count_q = select(func.count(Song.id)).join(
+            SongCredit, SongCredit.song_id == Song.id
+        ).where(SongCredit.artist_id == artist_id)
+        if role:
+            count_q = count_q.where(SongCredit.role.in_(role))
+        total_result = await self.db.execute(count_q)
+        total = total_result.scalar()
+
+        items_result = await self.db.execute(
+            q.order_by(Song.title).offset(skip).limit(limit)
+        )
+        rows = items_result.all()
         return total, rows
 
-    def get_collaborators(
-        self, artist_id: int
-    ) -> tuple[list, list]:
+    async def get_collaborators(self, artist_id: int) -> tuple[list, list]:
         artist_song_ids = (
-            self.db.query(SongCredit.song_id)
-            .filter(SongCredit.artist_id == artist_id)
+            select(SongCredit.song_id)
+            .where(SongCredit.artist_id == artist_id)
             .distinct()
             .subquery()
         )
-        co_artists = (
-            self.db.query(Artist.id, Artist.name, func.count(SongCredit.id).label("count"))
+
+        co_artists_result = await self.db.execute(
+            select(Artist.id, Artist.name, func.count(SongCredit.id).label("count"))
             .join(SongCredit, SongCredit.artist_id == Artist.id)
-            .filter(SongCredit.song_id.in_(artist_song_ids), Artist.id != artist_id)
+            .where(SongCredit.song_id.in_(select(artist_song_ids.c.song_id)), Artist.id != artist_id)
             .group_by(Artist.id, Artist.name)
-            .all()
         )
-        co_collaborators = (
-            self.db.query(Collaborator.id, Collaborator.name, func.count(SongCredit.id).label("count"))
+        co_artists = co_artists_result.all()
+
+        co_collaborators_result = await self.db.execute(
+            select(Collaborator.id, Collaborator.name, func.count(SongCredit.id).label("count"))
             .join(SongCredit, SongCredit.collaborator_id == Collaborator.id)
-            .filter(SongCredit.song_id.in_(artist_song_ids))
+            .where(SongCredit.song_id.in_(select(artist_song_ids.c.song_id)))
             .group_by(Collaborator.id, Collaborator.name)
-            .all()
         )
+        co_collaborators = co_collaborators_result.all()
+
         return co_artists, co_collaborators

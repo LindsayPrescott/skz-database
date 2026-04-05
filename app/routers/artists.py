@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.constants import ArtistType, CreditRole, ReleaseType
-from app.database import get_db
+from app.database import get_async_db
 from app.repositories import ArtistRepository
 from app.schemas.artists import (
     ArtistCollaboratorsResponse,
@@ -20,25 +20,25 @@ router = APIRouter(prefix="/artists", tags=["artists"])
 
 
 @router.get("/", response_model=Page[ArtistResponse])
-def list_artists(
+async def list_artists(
     artist_type: list[ArtistType] | None = Query(None, description="Filter by artist type."),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     repo = ArtistRepository(db)
-    total, items = repo.list(artist_type, skip, limit)
+    total, items = await repo.list(artist_type, skip, limit)
     return Page(total=total, skip=skip, limit=limit, has_more=skip + limit < total, items=items)
 
 
 @router.get("/{artist_id}", response_model=ArtistWithMembersResponse)
-def get_artist(
+async def get_artist(
     artist_id: int,
     include_former: bool = Query(False, description="Include former members in the response."),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     repo = ArtistRepository(db)
-    artist = repo.get_with_memberships(artist_id)
+    artist = await repo.get_with_memberships(artist_id)
     if not artist:
         raise HTTPException(status_code=404, detail="Artist not found")
 
@@ -56,37 +56,24 @@ def get_artist(
 
 
 @router.get("/{artist_id}/releases", response_model=ArtistReleasesPage)
-def get_artist_releases(
+async def get_artist_releases(
     artist_id: int,
-    release_type: list[ReleaseType] | None = Query(
-        None,
-        description="Filter by one or more release types.",
-    ),
-    role: list[CreditRole] | None = Query(
-        None,
-        description="Filter to releases where this artist has a specific credit role.",
-    ),
+    release_type: list[ReleaseType] | None = Query(None, description="Filter by one or more release types."),
+    role: list[CreditRole] | None = Query(None, description="Filter to releases where this artist has a specific credit role."),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """
     Returns releases attributed to this artist OR containing a song they are
     credited on (lyricist, composer, arranger, vocalist).
-
-    - For the group (Stray Kids): returns all releases where `Release.artist_id == 1`.
-    - For individual members: also includes releases they contributed credits to,
-      even if the release is attributed to the group or another artist.
-    - Use `?role=composer` (or multiple) to restrict to releases where this artist
-      holds that specific credit role. When role is provided, only credited releases
-      are returned — group-attributed releases are excluded.
     """
     repo = ArtistRepository(db)
-    artist = repo.get(artist_id)
+    artist = await repo.get(artist_id)
     if not artist:
         raise HTTPException(status_code=404, detail="Artist not found")
 
-    total, items = repo.list_releases(artist_id, release_type, role, skip, limit)
+    total, items = await repo.list_releases(artist_id, release_type, role, skip, limit)
     return ArtistReleasesPage(
         artist=ArtistResponse.model_validate(artist),
         total=total,
@@ -98,20 +85,20 @@ def get_artist_releases(
 
 
 @router.get("/{artist_id}/credits", response_model=ArtistCreditsPage)
-def get_artist_credits(
+async def get_artist_credits(
     artist_id: int,
     role: list[CreditRole] | None = Query(None, description="Filter by credit role."),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """All songs this artist has a writing or production credit on."""
     repo = ArtistRepository(db)
-    artist = repo.get(artist_id)
+    artist = await repo.get(artist_id)
     if not artist:
         raise HTTPException(status_code=404, detail="Artist not found")
 
-    total, rows = repo.list_credits(artist_id, role, skip, limit)
+    total, rows = await repo.list_credits(artist_id, role, skip, limit)
     return ArtistCreditsPage(
         artist=ArtistResponse.model_validate(artist),
         total=total,
@@ -126,18 +113,18 @@ def get_artist_credits(
 
 
 @router.get("/{artist_id}/collaborators", response_model=ArtistCollaboratorsResponse)
-def get_artist_collaborators(
+async def get_artist_collaborators(
     artist_id: int,
     limit: int = Query(20, ge=1, le=100),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db),
 ):
     """Ranked list of artists and collaborators most frequently co-credited with this artist."""
     repo = ArtistRepository(db)
-    artist = repo.get(artist_id)
+    artist = await repo.get(artist_id)
     if not artist:
         raise HTTPException(status_code=404, detail="Artist not found")
 
-    co_artists, co_collaborators = repo.get_collaborators(artist_id)
+    co_artists, co_collaborators = await repo.get_collaborators(artist_id)
     combined = sorted(
         [ArtistCollaboratorItem(id=r.id, name=r.name, type="artist", co_credit_count=r.count)
          for r in co_artists] +
