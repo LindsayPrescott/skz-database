@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.routers import artists, charts, releases, songs, tracks
+from app.routers import artists, charts, collaborators, releases, songs, tracks
 
 app = FastAPI(
     title="SKZ Database API",
@@ -9,6 +9,7 @@ app = FastAPI(
 )
 
 app.include_router(artists.router)
+app.include_router(collaborators.router)
 app.include_router(releases.router)
 app.include_router(songs.router)
 app.include_router(tracks.router)
