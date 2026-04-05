@@ -19,9 +19,11 @@ vs. the old approach of ~300 individual searches.
 Does NOT require user login — uses Client ID + Secret only.
 """
 import os
+import random
 import re
 import time
 import logging
+from collections import deque
 
 import requests
 from dotenv import load_dotenv
@@ -60,11 +62,20 @@ TRACKLIST_RELEASE_TYPES = {
 
 class SpotifyScraper:
 
+    # Rolling window: stay under Spotify's undisclosed 30-second limit.
+    # 40 calls/30s = ~1.33 calls/second — well under the likely threshold.
+    _WINDOW_SECONDS = 30
+    _WINDOW_MAX_CALLS = 40
+
     def __init__(self):
         self.client_id = os.environ["SPOTIFY_CLIENT_ID"]
         self.client_secret = os.environ["SPOTIFY_CLIENT_SECRET"]
         self._token: str | None = None
         self._token_expiry: float = 0
+        # Timestamps of recent API calls for rolling window enforcement
+        self._call_times: deque = deque()
+        # Cached album list — fetched once per run, reused across phases
+        self._sp_albums_cache: list[dict] | None = None
 
     # -----------------------------------------------------------------------
     # Auth + HTTP
@@ -90,20 +101,49 @@ class SpotifyScraper:
     # If Spotify asks us to wait longer than this, abort rather than block.
     MAX_RETRY_WAIT_SECONDS = 120
 
-    def _get(self, url: str, params: dict = None, _retries: int = 4) -> dict:
-        time.sleep(0.3)
+    def _throttle(self) -> None:
+        """
+        Enforce the rolling window limit before making a call.
+        Evicts timestamps older than _WINDOW_SECONDS, then sleeps if we are
+        at the per-window cap until the oldest call ages out.
+        """
+        now = time.monotonic()
+        cutoff = now - self._WINDOW_SECONDS
+        while self._call_times and self._call_times[0] < cutoff:
+            self._call_times.popleft()
+        if len(self._call_times) >= self._WINDOW_MAX_CALLS:
+            sleep_for = self._WINDOW_SECONDS - (now - self._call_times[0]) + 0.1
+            if sleep_for > 0:
+                logger.debug(f"  Window cap reached — sleeping {sleep_for:.1f}s")
+                time.sleep(sleep_for)
+        self._call_times.append(time.monotonic())
+
+    def _get(self, url: str, params: dict = None, _retries: int = 3) -> dict:
+        self._throttle()
         response = requests.get(url, headers=self._headers(), params=params)
-        if response.status_code == 429 and _retries > 0:
-            retry_after = int(response.headers.get("Retry-After", 15))
+        if response.status_code == 429:
+            retry_after_raw = response.headers.get("Retry-After")
+            if retry_after_raw is None:
+                # No Retry-After header = extended ban (potentially 24h).
+                # Do not retry — abort immediately.
+                raise RateLimitExceeded(
+                    "Spotify returned 429 with no Retry-After header — "
+                    "extended rate ban in effect. Run again tomorrow."
+                )
+            retry_after = int(retry_after_raw)
             if retry_after > self.MAX_RETRY_WAIT_SECONDS:
                 raise RateLimitExceeded(
                     f"Spotify rate limit too long: {retry_after}s "
                     f"(max allowed: {self.MAX_RETRY_WAIT_SECONDS}s). "
                     f"Run again later."
                 )
-            logger.warning(f"  Rate limited — waiting {retry_after}s")
-            time.sleep(retry_after)
-            return self._get(url, params, _retries - 1)
+            if _retries > 0:
+                # Add jitter so a retry burst doesn't immediately re-hit the limit.
+                wait = retry_after + random.uniform(1, 5)
+                logger.warning(f"  Rate limited — waiting {wait:.1f}s (Retry-After: {retry_after}s)")
+                time.sleep(wait)
+                return self._get(url, params, _retries - 1)
+            raise RateLimitExceeded(f"Exhausted retries after repeated 429s. Run again later.")
         response.raise_for_status()
         return response.json()
 
@@ -131,7 +171,13 @@ class SpotifyScraper:
         )
 
     def get_artist_albums(self) -> list[dict]:
-        """Fetch all albums/EPs/singles for Stray Kids from Spotify."""
+        """
+        Fetch all albums/EPs/singles for Stray Kids from Spotify.
+        Result is cached in memory — subsequent calls within the same scraper
+        run return the cached list without hitting the API again.
+        """
+        if self._sp_albums_cache is not None:
+            return self._sp_albums_cache
         artist_id = self.get_artist_id()
         albums = []
         url = f"{SPOTIFY_ARTIST_URL}/{artist_id}/albums"
@@ -141,6 +187,7 @@ class SpotifyScraper:
             albums.extend(data.get("items", []))
             url = data.get("next")
             params = {}
+        self._sp_albums_cache = albums
         return albums
 
     def get_album_tracks(self, spotify_album_id: str) -> list[dict]:
