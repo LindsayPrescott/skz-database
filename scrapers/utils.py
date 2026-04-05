@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.models.songs import Song, Track
 from app.models.releases import Release
+from scrapers.config import SKZ_CONFIG
 
 
 # ---------------------------------------------------------------------------
@@ -59,34 +60,15 @@ def normalize_title(title: str) -> str:
 # Artist / member resolution
 # ---------------------------------------------------------------------------
 
-# Canonical map of member name variants → artist_id.
-# Merges the previously diverged dicts in fandom_scraper and wikipedia_songs_scraper.
-MEMBER_ALIASES: dict[str, int] = {
-    "straykids": 1, "stray kids": 1,
-    "3racha": 2, "three racha": 2,
-    "danceracha": 3, "dance racha": 3,
-    "vocalracha": 4, "vocal racha": 4,
-    "bang chan": 5, "bangchan": 5, "chan": 5, "chris": 5, "cb97": 5,
-    "lee know": 6, "leeknow": 6, "minho": 6,
-    "changbin": 7, "seo changbin": 7, "spearb": 7,
-    "hyunjin": 8, "hwang hyunjin": 8,
-    "han": 9, "han jisung": 9, "jisung": 9, "j.one": 9,
-    "felix": 10, "lee felix": 10,
-    "seungmin": 11, "kim seungmin": 11,
-    "i.n": 12, "in": 12, "yang jeongin": 12, "jeongin": 12,
-    "woojin": 13, "kim woojin": 13,
-}
-
-# Lowercase member names used for member-suffix detection in Spotify titles.
-MEMBER_NAMES: frozenset[str] = frozenset({
-    "bang chan", "lee know", "changbin", "hyunjin", "han", "felix",
-    "seungmin", "i.n", "minho", "jisung", "chris",
-})
+# Module-level re-exports of SKZ_CONFIG values.
+# Kept for backwards compatibility — scrapers should prefer config.member_aliases.
+MEMBER_ALIASES: dict[str, int] = SKZ_CONFIG.member_aliases
+MEMBER_NAMES: frozenset[str] = SKZ_CONFIG.member_names
 
 
-def resolve_member(name: str) -> int | None:
+def resolve_member(name: str, aliases: dict[str, int] | None = None) -> int | None:
     """Return artist_id for a member name, or None if not recognised."""
-    return MEMBER_ALIASES.get(name.lower().strip())
+    return (aliases if aliases is not None else MEMBER_ALIASES).get(name.lower().strip())
 
 
 # ---------------------------------------------------------------------------

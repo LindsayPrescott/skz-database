@@ -22,28 +22,10 @@ from sqlalchemy.orm import Session
 from app.models.releases import Release
 from app.models.charts import ChartEntry, ReleaseSales
 from scrapers.base_scraper import BaseScraper
+from scrapers.config import GroupConfig, SKZ_CONFIG
 from scrapers.utils import clean, strip_quotes
 
 logger = logging.getLogger(__name__)
-
-DISCOGRAPHY_URL = "https://en.wikipedia.org/wiki/Stray_Kids_discography"
-
-# Stray Kids group artist_id from the seed migration
-SKZ_ARTIST_ID = 1
-
-# Maps normalised heading text → release_type column value
-HEADING_TO_RELEASE_TYPE = {
-    "studio albums": "studio_album",
-    "compilation albums": "compilation_album",
-    "reissues": "repackage",
-    "extended plays": "ep",
-    "mixtapes": "mixtape",
-    "single albums": "single_album",
-    "as lead artist": "digital_single",
-    "promotional singles": "digital_single",
-    "other charted songs": "digital_single",
-    "guest appearances": "feature",
-}
 
 # Tables we want to skip entirely
 SKIP_HEADINGS = {"videography", "video albums", "music videos", "other videos"}
@@ -188,9 +170,13 @@ def get_all_td_values(row: Tag) -> list[str]:
 
 class WikipediaDiscographyScraper(BaseScraper):
 
+    def __init__(self, config: GroupConfig = SKZ_CONFIG):
+        super().__init__()
+        self.config = config
+
     def scrape_discography(self, db: Session) -> None:
         logger.info("Fetching Wikipedia discography page...")
-        soup = self.get_soup(DISCOGRAPHY_URL)
+        soup = self.get_soup(self.config.wikipedia_discography_url)
 
         # Save raw HTML for debugging
         import os
@@ -214,8 +200,8 @@ class WikipediaDiscographyScraper(BaseScraper):
                 heading = get_heading_text(element)
                 if heading in SKIP_HEADINGS:
                     current_release_type = None
-                elif heading in HEADING_TO_RELEASE_TYPE:
-                    current_release_type = HEADING_TO_RELEASE_TYPE[heading]
+                elif heading in self.config.heading_to_release_type:
+                    current_release_type = self.config.heading_to_release_type[heading]
                     logger.info(f"  Section: {heading} → {current_release_type}")
                 continue
 
@@ -305,7 +291,7 @@ class WikipediaDiscographyScraper(BaseScraper):
                 label=label,
                 formats=formats,
                 market="KR",
-                artist_id=SKZ_ARTIST_ID,
+                artist_id=self.config.artist_id,
                 is_verified=True,
                 source="wikipedia",
             )

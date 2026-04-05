@@ -24,16 +24,14 @@ from app.models.releases import Release
 from app.models.songs import Song, Track
 from app.models.credits import SongCredit
 from scrapers.base_scraper import BaseScraper
+from scrapers.config import GroupConfig, SKZ_CONFIG
 from scrapers.utils import (
     clean,
     strip_quotes,
     normalize_release_title,
-    MEMBER_ALIASES,
 )
 
 logger = logging.getLogger(__name__)
-
-SONGS_URL = "https://en.wikipedia.org/wiki/List_of_songs_recorded_by_Stray_Kids"
 
 # Column indices (0-based)
 COL_SONG        = 0
@@ -65,11 +63,14 @@ SYMBOL_FLAGS = {
 # ---------------------------------------------------------------------------
 
 class ArtistCache:
-    """Resolves member name strings to artist_ids using the canonical MEMBER_ALIASES map."""
+    """Resolves member name strings to artist_ids using the group's member aliases."""
+
+    def __init__(self, aliases: dict[str, int]):
+        self._aliases = aliases
 
     def resolve(self, name: str) -> int | None:
         key = clean(name).lower()
-        return MEMBER_ALIASES.get(key)
+        return self._aliases.get(key)
 
 
 # ---------------------------------------------------------------------------
@@ -209,9 +210,13 @@ def parse_album_cell(cell: Tag) -> str | None:
 
 class WikipediaSongsScraper(BaseScraper):
 
+    def __init__(self, config: GroupConfig = SKZ_CONFIG):
+        super().__init__()
+        self.config = config
+
     def scrape_songs(self, db: Session) -> None:
         logger.info("Fetching Wikipedia songs list page...")
-        soup = self.get_soup(SONGS_URL)
+        soup = self.get_soup(self.config.wikipedia_songs_url)
 
         # Save raw HTML
         import os
@@ -219,7 +224,7 @@ class WikipediaSongsScraper(BaseScraper):
         with open("data/raw/wikipedia_songs.html", "w", encoding="utf-8") as f:
             f.write(str(soup))
 
-        artist_cache = ArtistCache()
+        artist_cache = ArtistCache(self.config.member_aliases)
         release_cache = ReleaseCache(db)
 
         # First wikitable is the symbol key legend — skip it, use the second

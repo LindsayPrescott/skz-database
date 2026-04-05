@@ -31,7 +31,8 @@ from sqlalchemy.orm import Session
 
 from app.models.releases import Release
 from app.models.songs import Song, Track
-from scrapers.utils import normalize_title, MEMBER_NAMES, find_song, link_song_to_release
+from scrapers.config import GroupConfig, SKZ_CONFIG
+from scrapers.utils import normalize_title, find_song, link_song_to_release
 
 load_dotenv()
 
@@ -47,8 +48,6 @@ SPOTIFY_SEARCH_URL  = "https://api.spotify.com/v1/search"
 SPOTIFY_ARTIST_URL  = "https://api.spotify.com/v1/artists"
 SPOTIFY_ALBUM_URL   = "https://api.spotify.com/v1/albums"
 SPOTIFY_TRACKS_URL  = "https://api.spotify.com/v1/tracks"
-
-SKZ_ARTIST_NAME = "Stray Kids"
 
 # Only enrich songs with these statuses
 ENRICHABLE_STATUSES = {"released"}
@@ -67,7 +66,8 @@ class SpotifyScraper:
     _WINDOW_SECONDS = 30
     _WINDOW_MAX_CALLS = 40
 
-    def __init__(self):
+    def __init__(self, config: GroupConfig = SKZ_CONFIG):
+        self.config = config
         self.client_id = os.environ["SPOTIFY_CLIENT_ID"]
         self.client_secret = os.environ["SPOTIFY_CLIENT_SECRET"]
         self._token: str | None = None
@@ -152,9 +152,10 @@ class SpotifyScraper:
     # -----------------------------------------------------------------------
 
     def get_artist_id(self) -> str:
-        """Look up Stray Kids' Spotify artist ID dynamically."""
+        """Look up the group's Spotify artist ID dynamically."""
+        artist_name = self.config.artist_name
         data = self._get(SPOTIFY_SEARCH_URL, params={
-            "q": f"artist:{SKZ_ARTIST_NAME}",
+            "q": f"artist:{artist_name}",
             "type": "artist",
             "limit": 10,
             "market": "US",
@@ -162,11 +163,11 @@ class SpotifyScraper:
         items = data.get("artists", {}).get("items", [])
         # Find the artist whose name matches exactly (case-insensitive)
         for item in items:
-            if item["name"].lower() == SKZ_ARTIST_NAME.lower():
-                logger.info(f"  Stray Kids Spotify artist ID: {item['id']}")
+            if item["name"].lower() == artist_name.lower():
+                logger.info(f"  {artist_name} Spotify artist ID: {item['id']}")
                 return item["id"]
         raise RuntimeError(
-            f"Could not find an artist named '{SKZ_ARTIST_NAME}' in Spotify search results. "
+            f"Could not find an artist named '{artist_name}' in Spotify search results. "
             f"Got: {[i['name'] for i in items]}"
         )
 
@@ -242,7 +243,7 @@ class SpotifyScraper:
         base, paren = m.group(1).strip(), m.group(2)
         # Split on ", " or " & "
         parts = [p.strip().lower() for p in re.split(r",\s*|\s+&\s+", paren)]
-        if parts and all(p in MEMBER_NAMES for p in parts):
+        if parts and all(p in self.config.member_names for p in parts):
             return base
         return None
 

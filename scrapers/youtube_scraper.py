@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 
 from app.models.releases import Release
 from app.models.songs import Song, Track
+from scrapers.config import GroupConfig, SKZ_CONFIG
 
 load_dotenv()
 
@@ -45,7 +46,8 @@ class QuotaExceeded(Exception):
 
 class YouTubeScraper:
 
-    def __init__(self):
+    def __init__(self, config: GroupConfig = SKZ_CONFIG):
+        self.config = config
         self.api_key = os.environ["YOUTUBE_API_KEY"]
 
     # -----------------------------------------------------------------------
@@ -127,7 +129,7 @@ class YouTubeScraper:
         not_found = 0
 
         for song in songs:
-            query = f'Stray Kids "{song.title}" MV official'
+            query = f'{self.config.artist_name} "{song.title}" MV official'
             url = self._search(query)
             if url:
                 song.youtube_url = url
@@ -164,7 +166,7 @@ class YouTubeScraper:
         not_found = 0
 
         for song in songs:
-            query = f'Stray Kids "{song.title}" MV official'
+            query = f'{self.config.artist_name} "{song.title}" MV official'
             url = self._search(query)
             if url:
                 song.youtube_url = url

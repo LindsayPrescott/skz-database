@@ -25,6 +25,7 @@ import logging
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 from app.database import SessionLocal
+from scrapers.config import SKZ_CONFIG
 from app.models.charts import ChartEntry, ReleaseSales
 from app.models.credits import SongCredit
 from app.models.releases import Release
@@ -310,11 +311,11 @@ def run_phases(phases: list[str]) -> None:
     try:
         if "wikipedia" in phases:
             print("Phase 1: Wikipedia discography → releases")
-            WikipediaDiscographyScraper().scrape_discography(db)
+            WikipediaDiscographyScraper(SKZ_CONFIG).scrape_discography(db)
 
         if "wikipedia-songs" in phases:
             print("Phase 2: Wikipedia songs list → songs, tracks, credits")
-            WikipediaSongsScraper().scrape_songs(db)
+            WikipediaSongsScraper(SKZ_CONFIG).scrape_songs(db)
 
         if "reconcile" in phases:
             reconcile_singles(db)
@@ -324,7 +325,7 @@ def run_phases(phases: list[str]) -> None:
             WikipediaSongArticlesScraper().scrape_song_articles(db)
 
         if "fandom" in phases:
-            scraper = FandomScraper()
+            scraper = FandomScraper(SKZ_CONFIG)
             print("Phase 3: Fandom SKZ-RECORD")
             scraper.scrape_skz_record(db)
             print("Phase 3: Fandom SKZ-PLAYER")
@@ -340,11 +341,11 @@ def run_phases(phases: list[str]) -> None:
 
         if "spotify" in phases:
             print("Phase 5: Spotify enrichment")
-            SpotifyScraper().enrich_songs(db)
+            SpotifyScraper(SKZ_CONFIG).enrich_songs(db)
 
         if "youtube" in phases:
             print("Phase 6: YouTube MV enrichment")
-            YouTubeScraper().enrich_songs(db)
+            YouTubeScraper(SKZ_CONFIG).enrich_songs(db)
 
         print("Done.")
     finally:

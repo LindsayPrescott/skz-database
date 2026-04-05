@@ -20,12 +20,10 @@ from app.models.releases import Release
 from app.models.songs import Song, Track
 from app.models.credits import SongCredit
 from scrapers.base_scraper import BaseScraper
-from scrapers.utils import clean, strip_quotes, MEMBER_ALIASES, resolve_member
+from scrapers.config import GroupConfig, SKZ_CONFIG
+from scrapers.utils import clean, strip_quotes, resolve_member
 
 logger = logging.getLogger(__name__)
-
-FANDOM_API = "https://stray-kids.fandom.com/api.php"
-SKZ_ARTIST_ID = 1
 
 
 # ---------------------------------------------------------------------------
@@ -53,7 +51,7 @@ def parse_fandom_date(text: str) -> date | None:
     return None
 
 
-def extract_member_from_title(title: str) -> tuple[str, int | None]:
+def extract_member_from_title(title: str, aliases: dict[str, int]) -> tuple[str, int | None]:
     """
     Handles formats:
       'MemberName "Song Title"'
@@ -74,7 +72,7 @@ def extract_member_from_title(title: str) -> tuple[str, int | None]:
         song_title = match.group(2).strip()
         # Try the last name in a comma list, then the full string
         for name in [member_part.split(",")[-1].strip(), member_part]:
-            artist_id = resolve_member(name)
+            artist_id = resolve_member(name, aliases)
             if artist_id:
                 return song_title, artist_id
     # Pattern: name(s) followed by wiki-linked title
@@ -82,7 +80,7 @@ def extract_member_from_title(title: str) -> tuple[str, int | None]:
     if match:
         member_name = match.group(1).strip()
         song_title = match.group(2).split("|")[-1].strip()
-        artist_id = resolve_member(member_name)
+        artist_id = resolve_member(member_name, aliases)
         if artist_id:
             return song_title, artist_id
     return title, None
@@ -106,9 +104,13 @@ def is_cover(title: str) -> bool:
 
 class FandomScraper(BaseScraper):
 
+    def __init__(self, config: GroupConfig = SKZ_CONFIG):
+        super().__init__()
+        self.config = config
+
     def fetch_wikitext(self, page_title: str) -> str:
         url = (
-            f"{FANDOM_API}?action=query"
+            f"{self.config.fandom_api}?action=query"
             f"&titles={page_title}"
             f"&prop=revisions&rvprop=content&rvslots=main"
             f"&format=json&formatversion=2"
@@ -157,7 +159,7 @@ class FandomScraper(BaseScraper):
                 continue
 
             release_date = parse_fandom_date(raw_date)
-            song_title, member_artist_id = extract_member_from_title(raw_title)
+            song_title, member_artist_id = extract_member_from_title(raw_title, self.config.member_aliases)
             original_artist = extract_cover_original(raw_title)
             cover = is_cover(raw_title)
 
@@ -183,7 +185,7 @@ class FandomScraper(BaseScraper):
                 release_subtype="skz_record",
                 release_date=release_date,
                 release_date_precision="day" if release_date else "year",
-                artist_id=member_artist_id or SKZ_ARTIST_ID,
+                artist_id=member_artist_id or self.config.artist_id,
                 market="GLOBAL",
                 fandom_url="https://stray-kids.fandom.com/wiki/SKZ-RECORD",
                 is_verified=True,
@@ -254,7 +256,7 @@ class FandomScraper(BaseScraper):
                 continue
 
             release_date = parse_fandom_date(raw_date)
-            song_title, member_artist_id = extract_member_from_title(raw_title)
+            song_title, member_artist_id = extract_member_from_title(raw_title, self.config.member_aliases)
             song_title = strip_quotes(song_title)
 
             if not song_title:
@@ -274,7 +276,7 @@ class FandomScraper(BaseScraper):
                 release_subtype="skz_player",
                 release_date=release_date,
                 release_date_precision="day" if release_date else "year",
-                artist_id=member_artist_id or SKZ_ARTIST_ID,
+                artist_id=member_artist_id or self.config.artist_id,
                 market="GLOBAL",
                 fandom_url="https://stray-kids.fandom.com/wiki/SKZ-PLAYER",
                 is_verified=True,
