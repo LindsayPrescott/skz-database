@@ -1,5 +1,5 @@
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class CreditedArtistResponse(BaseModel):
@@ -28,6 +28,12 @@ class SongCreditResponse(BaseModel):
     notes: Optional[str] = None
 
     model_config = {"from_attributes": True}
+
+    @model_validator(mode="after")
+    def check_entity_present(self) -> "SongCreditResponse":
+        if self.artist is None and self.collaborator is None:
+            raise ValueError("SongCreditResponse must have either artist or collaborator set")
+        return self
 
 
 class SongBase(BaseModel):
