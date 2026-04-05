@@ -1,10 +1,10 @@
 from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload, subqueryload
-from sqlalchemy import extract
+from sqlalchemy import extract, nulls_last
 
+from app.constants import Market, ReleaseType
 from app.database import get_db
-from app.models.credits import SongCredit
 from app.models.releases import Release
 from app.models.songs import Song, Track as TrackModel
 from app.schemas.pagination import Page
@@ -12,15 +12,6 @@ from app.schemas.releases import ReleaseResponse, ReleaseWithTracksResponse
 from app.schemas.tracks import TrackSummaryResponse, TrackResponse
 
 router = APIRouter(prefix="/releases", tags=["releases"])
-
-
-ReleaseType = Literal[
-    "studio_album", "ep", "single_album", "compilation_album",
-    "repackage", "mixtape", "digital_single", "feature",
-    "skz_record", "skz_player",
-]
-
-Market = Literal["KR", "JP", "US", "GLOBAL"]
 
 
 @router.get("/", response_model=Page[ReleaseResponse])
@@ -43,7 +34,7 @@ def list_releases(
     if year_to:
         q = q.filter(extract("year", Release.release_date) <= year_to)
     total = q.count()
-    items = q.order_by(Release.release_date.desc()).offset(skip).limit(limit).all()
+    items = q.order_by(nulls_last(Release.release_date.desc())).offset(skip).limit(limit).all()
     return Page(total=total, skip=skip, limit=limit, has_more=skip + limit < total, items=items)
 
 
@@ -79,11 +70,7 @@ def get_release(
         release = db.query(Release).filter(Release.id == release_id).first()
         if not release:
             raise HTTPException(status_code=404, detail="Release not found")
-        result = ReleaseWithTracksResponse.model_validate(
-            ReleaseResponse.model_validate(release).model_dump()
-        )
-        result.tracks = []
-        return result
+        return ReleaseWithTracksResponse.model_validate(release)
 
     # Eager-load tracks + song (+ credits for full)
     if tracks == "full":
@@ -110,16 +97,3 @@ def get_release(
     result = ReleaseWithTracksResponse.model_validate(release)
     result.tracks = track_data
     return result
-
-
-@router.get("/{release_id}/tracks", response_model=list[TrackResponse])
-def get_release_tracks(release_id: int, db: Session = Depends(get_db)):
-    release = (
-        db.query(Release)
-        .options(joinedload(Release.tracks).joinedload(TrackModel.song).subqueryload(Song.credits))
-        .filter(Release.id == release_id)
-        .first()
-    )
-    if not release:
-        raise HTTPException(status_code=404, detail="Release not found")
-    return sorted(release.tracks, key=lambda t: (t.disc_number or 1, t.track_number or 0))

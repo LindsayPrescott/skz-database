@@ -1,9 +1,8 @@
-from typing import Literal
-
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_
+from sqlalchemy import nulls_last, or_
 from sqlalchemy.orm import Session, joinedload
 
+from app.constants import ArtistType, CreditRole, ReleaseType
 from app.database import get_db
 from app.models.artists import Artist, ArtistMember
 from app.models.credits import SongCredit
@@ -11,29 +10,20 @@ from app.models.releases import Release
 from app.models.songs import Track
 from app.schemas.artists import ArtistReleasesPage, ArtistResponse, ArtistWithMembersResponse
 from app.schemas.pagination import Page
-from app.schemas.releases import ReleaseResponse
 
 router = APIRouter(prefix="/artists", tags=["artists"])
-
-ReleaseType = Literal[
-    "studio_album", "ep", "single_album", "compilation_album",
-    "repackage", "mixtape", "digital_single", "feature",
-    "skz_record", "skz_player",
-]
-
-CreditRole = Literal[
-    "vocalist", "rapper", "featured", "lyricist", "composer",
-    "arranger", "producer", "executive_producer",
-]
 
 
 @router.get("/", response_model=Page[ArtistResponse])
 def list_artists(
+    artist_type: list[ArtistType] | None = Query(None, description="Filter by artist type."),
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db),
 ):
     q = db.query(Artist)
+    if artist_type:
+        q = q.filter(Artist.artist_type.in_(artist_type))
     total = q.count()
     items = q.order_by(Artist.id).offset(skip).limit(limit).all()
     return Page(total=total, skip=skip, limit=limit, has_more=skip + limit < total, items=items)
@@ -93,7 +83,8 @@ def get_artist_releases(
     - For individual members: also includes releases they contributed credits to,
       even if the release is attributed to the group or another artist.
     - Use `?role=composer` (or multiple) to restrict to releases where this artist
-      holds a specific credit role.
+      holds that specific credit role. When role is provided, only credited releases
+      are returned — group-attributed releases are excluded.
     """
     artist = db.query(Artist).filter(Artist.id == artist_id).first()
     if not artist:
@@ -107,23 +98,28 @@ def get_artist_releases(
 
     if role:
         credited_release_ids = credited_release_ids.filter(SongCredit.role.in_(role))
-
-    q = (
-        db.query(Release)
-        .filter(
-            or_(
-                Release.artist_id == artist_id,
-                Release.id.in_(credited_release_ids),
-            )
+        q = (
+            db.query(Release)
+            .filter(Release.id.in_(credited_release_ids))
+            .distinct()
         )
-        .distinct()
-    )
+    else:
+        q = (
+            db.query(Release)
+            .filter(
+                or_(
+                    Release.artist_id == artist_id,
+                    Release.id.in_(credited_release_ids),
+                )
+            )
+            .distinct()
+        )
 
     if release_type:
         q = q.filter(Release.release_type.in_(release_type))
 
     total = q.count()
-    items = q.order_by(Release.release_date.desc()).offset(skip).limit(limit).all()
+    items = q.order_by(nulls_last(Release.release_date.desc())).offset(skip).limit(limit).all()
     return ArtistReleasesPage(
         artist=ArtistResponse.model_validate(artist),
         total=total,
