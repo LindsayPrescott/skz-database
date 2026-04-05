@@ -34,7 +34,9 @@ skz-database/
 │   └── main.py          # FastAPI app + router registration
 ├── scrapers/
 │   ├── run_all.py       # Orchestrator: runs all phases in order
-│   └── *.py             # Individual phase scrapers (Wikipedia, Fandom, Spotify)
+│   ├── config.py        # GroupConfig dataclass + per-group instances (SKZ_CONFIG, etc.)
+│   ├── utils.py         # Shared text cleaning, title normalisation, DB lookup helpers
+│   └── *.py             # Individual phase scrapers (Wikipedia, Fandom, Spotify, YouTube)
 ├── alembic/
 │   └── versions/        # Migration history
 ├── docker-compose.yml
@@ -141,13 +143,19 @@ API available at `http://localhost:8000`. Interactive docs at `http://localhost:
 
 Phases run in dependency order regardless of the order `--phases` arguments are given.
 
+The `--group` flag selects which group's config to use (default: `skz`). Adding a new group requires only a new entry in `scrapers/config.py` — no changes to `run_all.py` or any scraper.
+
+```bash
+poetry run python -m scrapers.run_all --group skz
+```
+
 ---
 
 ## API Endpoints
 
 > The interactive docs at `http://localhost:8000/docs` are always authoritative. The tables below are a high-level overview and may not reflect every endpoint.
 
-All list endpoints return a paginated envelope:
+All endpoints are under `/v1`. All list endpoints return a paginated envelope:
 
 ```json
 {
@@ -162,34 +170,45 @@ All list endpoints return a paginated envelope:
 ### Artists
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/artists` | List all artists — filter by `artist_type[]` |
-| `GET` | `/artists/{id}` | Artist detail with members — `?include_former=true` |
-| `GET` | `/artists/{id}/releases` | All releases for an artist — filter by `release_type[]`, `role[]` |
-| `GET` | `/artists/{id}/credits` | All songs this artist has a writing/production credit on |
-| `GET` | `/artists/{id}/collaborators` | Ranked list of most frequent co-credits |
+| `GET` | `/v1/artists` | List all artists — filter by `artist_type[]` |
+| `GET` | `/v1/artists/{id}` | Artist detail with members — `?include_former=true` |
+| `GET` | `/v1/artists/{id}/releases` | All releases for an artist — filter by `release_type[]`, `role[]` |
+| `GET` | `/v1/artists/{id}/credits` | All songs this artist has a writing/production credit on |
+| `GET` | `/v1/artists/{id}/collaborators` | Ranked list of most frequent co-credits |
 
 ### Releases
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/releases` | List releases — filter by `release_type[]`, `market[]` |
-| `GET` | `/releases/{id}` | Release detail |
-| `GET` | `/releases/{id}/tracks` | Full tracklist with credits |
-| `GET` | `/releases/{id}/tracks/summary` | Tracklist with title and track number only |
+| `GET` | `/v1/releases` | List releases — filter by `release_type[]`, `market[]` |
+| `GET` | `/v1/releases/{id}` | Release detail |
+| `GET` | `/v1/releases/{id}/tracks` | Full tracklist with credits |
+| `GET` | `/v1/releases/{id}/tracks/summary` | Tracklist with title and track number only |
 
 ### Songs
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/songs` | List songs — filter by `status`, `?versions=true` to include version songs |
-| `GET` | `/songs/search?q=` | Search by title (English, Korean, romanized, Japanese) |
-| `GET` | `/songs/{id}` | Song detail with credits and versions |
-| `GET` | `/songs/{id}/versions` | All alternate versions of a song |
+| `GET` | `/v1/songs` | List songs — filter by `status`, `?versions=true` to include version songs |
+| `GET` | `/v1/songs/search?q=` | Search by title (English, Korean, romanized, Japanese) |
+| `GET` | `/v1/songs/{id}` | Song detail with credits and versions |
+| `GET` | `/v1/songs/{id}/versions` | All alternate versions of a song |
+
+### Charts
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/v1/charts` | Peak chart positions per release |
+| `GET` | `/v1/charts/sales` | Sales and certification data |
 
 ### Collaborators
 | Method | Path | Description |
 |---|---|---|
-| `GET` | `/collaborators` | List all external collaborators |
-| `GET` | `/collaborators/{id}` | Collaborator detail |
-| `GET` | `/collaborators/{id}/releases` | All releases a collaborator is credited on |
+| `GET` | `/v1/collaborators` | List all external collaborators — `?q=` name search |
+| `GET` | `/v1/collaborators/{id}` | Collaborator detail with role breakdown |
+| `GET` | `/v1/collaborators/{id}/releases` | All releases a collaborator is credited on |
+
+### Health
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/health` | Returns `{"status": "ok"}` or `503` if the DB is unreachable |
 
 ---
 
@@ -241,6 +260,9 @@ poetry run python -m scrapers.run_all --phases fandom dedup-releases dedup-songs
 
 # Spotify only (after rate limit clears)
 poetry run python -m scrapers.run_all --phases spotify
+
+# Target a specific group (default: skz)
+poetry run python -m scrapers.run_all --group skz --phases spotify
 ```
 
 All phases are idempotent — already-present data is skipped automatically.
