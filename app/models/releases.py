@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Date, Integer, String, Text, ForeignKey
+from sqlalchemy import Boolean, Column, Date, Index, Integer, String, Text, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from app.models.base import Base
@@ -25,6 +25,7 @@ class Release(Base):
     catalog_number = Column(String(100))
     formats = Column(String(200))  # e.g. "CD, Digital"
     artist_id = Column(Integer, ForeignKey("artists.id"))
+    spotify_id = Column(String(100), nullable=True)
     wikipedia_url = Column(String(500))
     fandom_url = Column(String(500))
     cover_image_url = Column(String(500))
@@ -32,6 +33,13 @@ class Release(Base):
     # 'wikipedia' | 'fandom' | 'spotify' | 'manual'
     source = Column(String(20), default="manual")
     notes = Column(Text)
+
+    __table_args__ = (
+        UniqueConstraint("spotify_id", name="uq_releases_spotify_id"),
+        Index("ix_releases_artist_id", "artist_id"),
+        Index("ix_releases_release_date", "release_date"),
+        Index("ix_releases_release_type", "release_type"),
+    )
 
     artist = relationship("Artist", back_populates="releases")
     tracks = relationship("Track", back_populates="release", cascade="all, delete-orphan")

@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Integer, String, Text, ForeignKey
+from sqlalchemy import Boolean, Column, Index, Integer, String, Text, ForeignKey
 from sqlalchemy.orm import relationship
 
 from app.models.base import Base
@@ -36,6 +36,16 @@ class Song(Base):
     source = Column(String(20), default="manual")
     notes = Column(Text)
 
+    __table_args__ = (
+        Index("ix_songs_parent_song_id", "parent_song_id"),
+        Index("ix_songs_release_status", "release_status"),
+        Index("ix_songs_language", "language"),
+        Index("ix_songs_title_trgm", "title", postgresql_using="gin", postgresql_ops={"title": "gin_trgm_ops"}),
+        Index("ix_songs_title_korean_trgm", "title_korean", postgresql_using="gin", postgresql_ops={"title_korean": "gin_trgm_ops"}),
+        Index("ix_songs_title_romanized_trgm", "title_romanized", postgresql_using="gin", postgresql_ops={"title_romanized": "gin_trgm_ops"}),
+        Index("ix_songs_title_japanese_trgm", "title_japanese", postgresql_using="gin", postgresql_ops={"title_japanese": "gin_trgm_ops"}),
+    )
+
     versions = relationship("Song", foreign_keys="[Song.parent_song_id]", back_populates="parent")
     parent = relationship("Song", foreign_keys="[Song.parent_song_id]", remote_side="[Song.id]", back_populates="versions")
     tracks = relationship("Track", back_populates="song")
@@ -57,6 +67,11 @@ class Track(Base):
     is_outro = Column(Boolean, nullable=False, default=False)
     is_bonus = Column(Boolean, nullable=False, default=False)
     version_note = Column(String(200))  # e.g. "Japanese ver.", "Inst."
+
+    __table_args__ = (
+        Index("ix_tracks_release_id", "release_id"),
+        Index("ix_tracks_song_id", "song_id"),
+    )
 
     release = relationship("Release", back_populates="tracks")
     song = relationship("Song", back_populates="tracks")

@@ -19,6 +19,9 @@ build/
 # Raw scraped HTML
 data/raw/
 
+# Spotify API response cache
+data/spotify_cache/
+
 # IDE
 .vscode/
 .idea/
@@ -30,3 +33,5 @@ data/raw/
 # Project notes
 PROGRESS.md
 CLAUDE.md
+IDEAS.md
+ARCHITECTURE.md

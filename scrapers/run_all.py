@@ -306,7 +306,7 @@ PHASES = [
 ]
 
 
-def run_phases(phases: list[str], config=SKZ_CONFIG) -> None:
+def run_phases(phases: list[str], config=SKZ_CONFIG, use_cache: bool = True) -> None:
     db = SessionLocal()
     try:
         if "wikipedia" in phases:
@@ -341,7 +341,7 @@ def run_phases(phases: list[str], config=SKZ_CONFIG) -> None:
 
         if "spotify" in phases:
             print("Phase 5: Spotify enrichment")
-            SpotifyScraper(config).enrich_songs(db)
+            SpotifyScraper(config, use_cache=use_cache).enrich_songs(db)
 
         if "youtube" in phases:
             print("Phase 6: YouTube MV enrichment")
@@ -376,9 +376,14 @@ def main() -> None:
             f"Available: {', '.join(PHASES)}"
         ),
     )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Bypass the Spotify disk cache and re-fetch all API responses.",
+    )
     args = parser.parse_args()
     config = GROUP_CONFIGS[args.group]
-    run_phases(args.phases if args.phases else PHASES, config)
+    run_phases(args.phases if args.phases else PHASES, config, use_cache=not args.no_cache)
 
 
 if __name__ == "__main__":

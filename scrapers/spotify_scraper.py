@@ -18,19 +18,21 @@ vs. the old approach of ~300 individual searches.
 
 Does NOT require user login — uses Client ID + Secret only.
 """
+import json
 import os
 import random
 import re
 import time
 import logging
 from collections import deque
+from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
 
 from app.models.releases import Release
-from app.models.songs import Song, Track
+from app.models.songs import Song
 from scrapers.config import GroupConfig, SKZ_CONFIG
 from scrapers.utils import normalize_title, find_song, link_song_to_release
 
@@ -49,13 +51,16 @@ SPOTIFY_ARTIST_URL  = "https://api.spotify.com/v1/artists"
 SPOTIFY_ALBUM_URL   = "https://api.spotify.com/v1/albums"
 SPOTIFY_TRACKS_URL  = "https://api.spotify.com/v1/tracks"
 
+# Disk cache TTL — responses older than this are re-fetched from Spotify
+CACHE_TTL_SECONDS = 86400  # 24 hours
+
 # Only enrich songs with these statuses
 ENRICHABLE_STATUSES = {"released"}
 
 # Release types to fill tracklists for
 TRACKLIST_RELEASE_TYPES = {
     "studio_album", "ep", "compilation_album",
-    "repackage", "mixtape", "single_album",
+    "repackage", "mixtape", "single_album", "digital_single",
 }
 
 
@@ -66,7 +71,7 @@ class SpotifyScraper:
     _WINDOW_SECONDS = 30
     _WINDOW_MAX_CALLS = 40
 
-    def __init__(self, config: GroupConfig = SKZ_CONFIG):
+    def __init__(self, config: GroupConfig = SKZ_CONFIG, use_cache: bool = True):
         self.config = config
         self.client_id = os.environ["SPOTIFY_CLIENT_ID"]
         self.client_secret = os.environ["SPOTIFY_CLIENT_SECRET"]
@@ -74,8 +79,11 @@ class SpotifyScraper:
         self._token_expiry: float = 0
         # Timestamps of recent API calls for rolling window enforcement
         self._call_times: deque = deque()
-        # Cached album list — fetched once per run, reused across phases
+        # In-memory album list cache — fetched once per run, reused across phases
         self._sp_albums_cache: list[dict] | None = None
+        # Disk cache — saves API responses between runs to avoid re-fetching
+        self._use_cache = use_cache
+        self._cache_dir = Path("data/spotify_cache")
 
     # -----------------------------------------------------------------------
     # Auth + HTTP
@@ -97,6 +105,29 @@ class SpotifyScraper:
 
     def _headers(self) -> dict:
         return {"Authorization": f"Bearer {self._get_token()}"}
+
+    # -----------------------------------------------------------------------
+    # Disk cache
+    # -----------------------------------------------------------------------
+
+    def _cache_load(self, key: str) -> list | dict | None:
+        if not self._use_cache:
+            return None
+        path = self._cache_dir / f"{key}.json"
+        if not path.exists():
+            return None
+        if time.time() - path.stat().st_mtime > CACHE_TTL_SECONDS:
+            logger.debug(f"  Cache expired: {key}")
+            return None
+        with open(path) as f:
+            return json.load(f)
+
+    def _cache_save(self, key: str, data: list | dict) -> None:
+        if not self._use_cache:
+            return
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        with open(self._cache_dir / f"{key}.json", "w") as f:
+            json.dump(data, f)
 
     # If Spotify asks us to wait longer than this, abort rather than block.
     MAX_RETRY_WAIT_SECONDS = 120
@@ -173,12 +204,17 @@ class SpotifyScraper:
 
     def get_artist_albums(self) -> list[dict]:
         """
-        Fetch all albums/EPs/singles for Stray Kids from Spotify.
-        Result is cached in memory — subsequent calls within the same scraper
-        run return the cached list without hitting the API again.
+        Fetch all albums/EPs/singles from Spotify's artist endpoint.
+        Checks the disk cache first; falls back to the API and saves the result.
+        In-memory cache prevents redundant calls within the same run.
         """
         if self._sp_albums_cache is not None:
             return self._sp_albums_cache
+        cached = self._cache_load("artist_albums")
+        if cached is not None:
+            logger.debug("  Loaded artist albums from disk cache")
+            self._sp_albums_cache = cached
+            return cached
         artist_id = self.get_artist_id()
         albums = []
         url = f"{SPOTIFY_ARTIST_URL}/{artist_id}/albums"
@@ -188,11 +224,15 @@ class SpotifyScraper:
             albums.extend(data.get("items", []))
             url = data.get("next")
             params = {}
+        self._cache_save("artist_albums", albums)
         self._sp_albums_cache = albums
         return albums
 
     def get_album_tracks(self, spotify_album_id: str) -> list[dict]:
-        """Fetch all tracks for a Spotify album, handling pagination."""
+        """Fetch all tracks for a Spotify album. Results are disk-cached."""
+        cached = self._cache_load(f"album_{spotify_album_id}")
+        if cached is not None:
+            return cached
         tracks = []
         url = f"{SPOTIFY_ALBUM_URL}/{spotify_album_id}/tracks"
         params = {"limit": 50}
@@ -201,30 +241,62 @@ class SpotifyScraper:
             tracks.extend(data.get("items", []))
             url = data.get("next")
             params = {}
+        self._cache_save(f"album_{spotify_album_id}", tracks)
         return tracks
 
     def get_tracks_batch(self, track_ids: list[str]) -> list[dict]:
         """
         Fetch full track details (including ISRC) for up to 50 track IDs at once.
-        Much more efficient than fetching one at a time.
+        Each track is cached individually by spotify_id so incremental runs
+        only fetch tracks that haven't been seen before.
         """
         results = []
-        for i in range(0, len(track_ids), 50):
-            batch = track_ids[i:i + 50]
+        uncached_ids = []
+
+        for sp_id in track_ids:
+            cached = self._cache_load(f"track_{sp_id}")
+            if cached is not None:
+                results.append(cached)
+            else:
+                uncached_ids.append(sp_id)
+
+        for i in range(0, len(uncached_ids), 50):
+            batch = uncached_ids[i:i + 50]
             data = self._get(SPOTIFY_TRACKS_URL, params={"ids": ",".join(batch)})
-            results.extend(data.get("tracks", []))
+            for track in data.get("tracks", []):
+                if track:
+                    self._cache_save(f"track_{track['id']}", track)
+                    results.append(track)
+
         return results
 
-    def search_track(self, title: str, artist: str = "Stray Kids") -> dict | None:
-        """Fallback: search for a single track by title."""
-        data = self._get(SPOTIFY_SEARCH_URL, params={
-            "q": f"track:{title} artist:{artist}",
-            "type": "track",
-            "limit": 1,
-            "market": "US",
-        })
-        items = data.get("tracks", {}).get("items", [])
-        return items[0] if items else None
+    def search_track(self, title: str, artist: str | None = None) -> dict | None:
+        """Search for a single track by title. Retries with KR market if US returns nothing."""
+        artist = artist or self.config.artist_name
+        for market in ("US", "KR"):
+            data = self._get(SPOTIFY_SEARCH_URL, params={
+                "q": f"track:{title} artist:{artist}",
+                "type": "track",
+                "limit": 1,
+                "market": market,
+            })
+            items = data.get("tracks", {}).get("items", [])
+            if items:
+                return items[0]
+        return None
+
+    def search_album(self, title: str, artist: str | None = None) -> dict | None:
+        """Search for an album by title. Retries with KR market if the first attempt returns nothing."""
+        artist = artist or self.config.artist_name
+        for market in (None, "KR"):
+            params: dict = {"q": f"album:{title} artist:{artist}", "type": "album", "limit": 1}
+            if market:
+                params["market"] = market
+            data = self._get(SPOTIFY_SEARCH_URL, params=params)
+            items = data.get("albums", {}).get("items", [])
+            if items:
+                return items[0]
+        return None
 
     # -----------------------------------------------------------------------
     # Song matching helpers
@@ -304,6 +376,8 @@ class SpotifyScraper:
         try:
             self._discover_missing_releases(db)
             self._album_first_enrichment(db)
+            self._batch_isrc_fetch(db)
+            self._trackless_release_fallback(db)
             self._fallback_search_enrichment(db)
         except RateLimitExceeded as e:
             db.commit()  # Save whatever progress was made before the limit hit
@@ -337,20 +411,20 @@ class SpotifyScraper:
 
         sp_albums = self.get_artist_albums()
 
-        # Build normalised title → id map of what we already have
-        existing = {r.title.lower().strip(): r.id for r in db.query(Release).all()}
+        # Build normalised (title, release_type) → id map of what we already have
+        existing = {
+            (r.title.lower().strip(), r.release_type): r.id
+            for r in db.query(Release).all()
+        }
 
         new_count = 0
         for sp_album in sp_albums:
             title = sp_album["name"]
-            key = title.lower().strip()
-
-            if key in existing:
-                continue
-
-            # Map Spotify album_type to our release_type
             sp_type = sp_album.get("album_type", "single")
             release_type = self._SPOTIFY_TYPE_MAP.get(sp_type, "digital_single")
+
+            if (title.lower().strip(), release_type) in existing:
+                continue
 
             # Parse release_date — Spotify provides precision alongside the date string
             raw_date = sp_album.get("release_date", "")
@@ -375,10 +449,11 @@ class SpotifyScraper:
                 market="GLOBAL",
                 source="spotify",
                 is_verified=True,
+                spotify_id=sp_album["id"],
             )
             db.add(release)
             db.flush()
-            existing[key] = release.id
+            existing[(title.lower().strip(), release_type)] = release.id
             logger.info(f"  New release: {title} ({release_type}, {raw_date or 'no date'})")
             new_count += 1
 
@@ -395,13 +470,13 @@ class SpotifyScraper:
         sp_albums = self.get_artist_albums()
         logger.info(f"  Found {len(sp_albums)} releases on Spotify for Stray Kids")
 
-        # Build a map of normalised album title → our Release id for linking tracks
+        # Build a map of normalised album title → our Release for linking tracks
         our_releases = db.query(Release).filter(
             Release.release_type.in_(TRACKLIST_RELEASE_TYPES)
         ).all()
-        release_map: dict[str, int] = {}
+        release_map: dict[str, Release] = {}
         for r in our_releases:
-            release_map[r.title.lower().strip()] = r.id
+            release_map[r.title.lower().strip()] = r
 
         enriched_songs = 0
         new_songs = 0
@@ -416,8 +491,11 @@ class SpotifyScraper:
 
             logger.info(f"  Processing album: {album_title} ({len(sp_tracks)} tracks)")
 
-            # Find matching release in our DB
-            our_release_id = release_map.get(album_title.lower().strip())
+            # Find matching release in our DB and stamp its spotify_id
+            our_release = release_map.get(album_title.lower().strip())
+            if our_release and our_release.spotify_id is None:
+                our_release.spotify_id = sp_album_id
+            our_release_id = our_release.id if our_release else None
 
             for i, sp_track in enumerate(sp_tracks, start=1):
                 sp_id = sp_track.get("id")
@@ -425,10 +503,8 @@ class SpotifyScraper:
                     continue
                 title = sp_track["name"]
                 duration_s = sp_track["duration_ms"] // 1000
-                # ISRC requires the full track endpoint (/v1/tracks/{id}), which still
-                # works with client credentials, but the batch endpoint (/v1/tracks?ids=)
-                # is now 403. Skipping ISRC in Pass 1 — Pass 2 (search) populates it
-                # for unmatched songs via the full search result object.
+                # ISRC is not fetched here — Pass 1.1 batch-fetches ISRCs for all
+                # Pass 1 songs after album traversal completes.
                 isrc = None
 
                 song = self._find_song(db, title, sp_id)
@@ -469,6 +545,167 @@ class SpotifyScraper:
             db.commit()
 
         logger.info(f"Pass 1 complete. Enriched: {enriched_songs} | New songs added: {new_songs}")
+
+    # -----------------------------------------------------------------------
+    # Pass 1.1: Batch ISRC fetch
+    # -----------------------------------------------------------------------
+
+    def _batch_isrc_fetch(self, db: Session) -> None:
+        """
+        Pass 1.1: Batch-fetch ISRCs for all songs that have a spotify_id but
+        no ISRC. Songs enriched by Pass 1 never enter Pass 2 (Pass 2 filters
+        on spotify_id IS NULL), so without this pass they never get ISRC set.
+
+        Uses the /v1/tracks endpoint — ~3-4 calls for a full discography
+        (50 IDs per batch request).
+        """
+        songs = (
+            db.query(Song)
+            .filter(Song.spotify_id.isnot(None), Song.isrc.is_(None))
+            .all()
+        )
+
+        if not songs:
+            logger.info("Pass 1.1: All songs already have ISRC — skipping.")
+            return
+
+        logger.info(f"Pass 1.1: Fetching ISRCs for {len(songs)} songs...")
+
+        id_to_song = {s.spotify_id: s for s in songs}
+        track_data = self.get_tracks_batch(list(id_to_song.keys()))
+
+        enriched = 0
+        for track in track_data:
+            if not track:
+                continue
+            isrc = track.get("external_ids", {}).get("isrc")
+            song = id_to_song.get(track.get("id"))
+            if song and isrc:
+                self._safe_set_isrc(db, song, isrc)
+                enriched += 1
+
+        db.commit()
+        logger.info(f"Pass 1.1 complete. ISRCs set: {enriched}")
+
+    # -----------------------------------------------------------------------
+    # Pass 1.5: Trackless release fallback
+    # -----------------------------------------------------------------------
+
+    def _trackless_release_fallback(self, db: Session) -> None:
+        """
+        Some releases exist on Spotify but are excluded from the artist/albums
+        endpoint because Spotify returns available_markets=[] for them (a
+        geo-restriction or indexing quirk). Pass 1 never sees these.
+
+        This pass finds DB releases that still have 0 tracks after Pass 1 and
+        tries to locate each one via Spotify's search API, then creates the
+        song row and track link if found.
+
+        Trigger is trackless (0 tracks linked) rather than missing spotify_id —
+        this is self-resolving: once tracks are added the release disappears from
+        future runs. Avoids permanently re-searching releases that are genuinely
+        not on Spotify (e.g. old compilation releases).
+        """
+        from app.models.songs import Track
+
+        trackless = (
+            db.query(Release)
+            .outerjoin(Track, Track.release_id == Release.id)
+            .filter(Track.id.is_(None))
+            .all()
+        )
+
+        if not trackless:
+            logger.info("Pass 1.5: No trackless releases — skipping.")
+            return
+
+        logger.info(f"Pass 1.5: {len(trackless)} release(s) with no tracks — searching Spotify...")
+
+        resolved = 0
+        for release in trackless:
+            # Try album search first — handles multi-track releases (compilations, EPs)
+            # that are invisible to the artist/albums traversal due to markets=[]
+            sp_album = self.search_album(release.title)
+            if sp_album:
+                sp_tracks = self.get_album_tracks(sp_album["id"])
+                if sp_tracks:
+                    if release.spotify_id is None:
+                        release.spotify_id = sp_album["id"]
+                    logger.info(f"  Album found: {release.title!r} ({len(sp_tracks)} tracks)")
+                    for i, sp_track in enumerate(sp_tracks, start=1):
+                        sp_id = sp_track["id"]
+                        title = sp_track["name"]
+                        duration_s = sp_track["duration_ms"] // 1000
+
+                        song = self._find_song(db, title, sp_id)
+                        if song:
+                            if song.spotify_id is None:
+                                song.spotify_id = sp_id
+                            if song.duration_seconds is None:
+                                song.duration_seconds = duration_s
+                        else:
+                            song = Song(
+                                title=title,
+                                duration_seconds=duration_s,
+                                spotify_id=sp_id,
+                                language="ko",
+                                release_status="released",
+                                is_verified=True,
+                                source="spotify",
+                            )
+                            db.add(song)
+                            db.flush()
+                            logger.info(f"    New song: {title!r}")
+
+                        link_song_to_release(
+                            db, song, release.id,
+                            track_number=i,
+                            disc_number=sp_track.get("disc_number", 1),
+                        )
+
+                    logger.info(f"  Resolved: {release.title!r}")
+                    resolved += 1
+                    continue
+
+            # Fall back to single-track search for digital singles / features
+            sp_track = self.search_track(release.title)
+            if not sp_track:
+                logger.info(f"  Not found on Spotify: {release.title!r}")
+                continue
+
+            sp_id = sp_track["id"]
+            title = sp_track["name"]
+            duration_s = sp_track["duration_ms"] // 1000
+
+            if release.spotify_id is None:
+                release.spotify_id = sp_track["album"]["id"]
+
+            song = self._find_song(db, title, sp_id)
+            if song:
+                if song.spotify_id is None:
+                    song.spotify_id = sp_id
+                if song.duration_seconds is None:
+                    song.duration_seconds = duration_s
+            else:
+                song = Song(
+                    title=title,
+                    duration_seconds=duration_s,
+                    spotify_id=sp_id,
+                    language="ko",
+                    release_status="released",
+                    is_verified=True,
+                    source="spotify",
+                )
+                db.add(song)
+                db.flush()
+                logger.info(f"  New song: {title!r}")
+
+            link_song_to_release(db, song, release.id, track_number=1, disc_number=1)
+            logger.info(f"  Resolved: {release.title!r} → song id={song.id}")
+            resolved += 1
+
+        db.commit()
+        logger.info(f"Pass 1.5 complete. Resolved: {resolved} | Skipped: {len(trackless) - resolved}")
 
     # -----------------------------------------------------------------------
     # Pass 2: Fallback individual search

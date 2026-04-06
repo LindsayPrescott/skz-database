@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, CheckConstraint, Column, Integer, String, Text, ForeignKey, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Column, Index, Integer, String, Text, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from app.models.base import Base
@@ -21,6 +21,9 @@ class SongCredit(Base):
     __table_args__ = (
         UniqueConstraint("song_id", "artist_id", "collaborator_id", "role", name="uq_song_credit"),
         CheckConstraint("artist_id IS NOT NULL OR collaborator_id IS NOT NULL", name="ck_song_credit_has_entity"),
+        Index("ix_song_credits_song_id", "song_id"),
+        Index("ix_song_credits_artist_id", "artist_id"),
+        Index("ix_song_credits_collaborator_id", "collaborator_id"),
     )
 
     song = relationship("Song", back_populates="credits")
