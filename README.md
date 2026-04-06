@@ -138,7 +138,7 @@ API available at `http://localhost:8000`. Interactive docs at `http://localhost:
 | 3 | `fandom` | Stray Kids Fandom Wiki | SKZ-RECORD + SKZ-PLAYER releases/songs, unreleased songs |
 | 3.5 | `dedup-releases` | *(deduplication)* | Merges duplicate release rows created by overlapping Wikipedia + Fandom data |
 | 4 | `dedup-songs` | *(deduplication)* | Merges case-insensitive duplicate songs created by overlapping Wikipedia + Fandom data |
-| 5 | `spotify` | Spotify Web API | `spotify_id`, `isrc`, `duration_seconds` on songs; creates missing songs from album tracklists |
+| 5 | `spotify` | Spotify Web API | `spotify_id`, `isrc`, `duration_seconds` on songs; `spotify_id` on releases; creates missing songs from album tracklists; API responses cached to `data/spotify_cache/` |
 | 6 | `youtube` | YouTube Data API | `youtube_url` (official MV links) on songs |
 
 Phases run in dependency order regardless of the order `--phases` arguments are given.
@@ -260,6 +260,9 @@ poetry run python -m scrapers.run_all --phases fandom dedup-releases dedup-songs
 
 # Spotify only (after rate limit clears)
 poetry run python -m scrapers.run_all --phases spotify
+
+# Spotify — bypass disk cache to force fresh API responses
+poetry run python -m scrapers.run_all --phases spotify --no-cache
 
 # Target a specific group (default: skz)
 poetry run python -m scrapers.run_all --group skz --phases spotify
