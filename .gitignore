@@ -19,8 +19,9 @@ build/
 # Raw scraped HTML
 data/raw/
 
-# Spotify API response cache
+# Spotify API response cache and persistent skip lists
 data/spotify_cache/
+data/spotify_not_found.json
 
 # IDE
 .vscode/

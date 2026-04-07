@@ -18,6 +18,7 @@ vs. the old approach of ~300 individual searches.
 
 Does NOT require user login — uses Client ID + Secret only.
 """
+import hashlib
 import json
 import os
 import random
@@ -84,6 +85,7 @@ class SpotifyScraper:
         # Disk cache — saves API responses between runs to avoid re-fetching
         self._use_cache = use_cache
         self._cache_dir = Path("data/spotify_cache")
+        self._not_found_path = Path("data/spotify_not_found.json")
 
     # -----------------------------------------------------------------------
     # Auth + HTTP
@@ -128,6 +130,19 @@ class SpotifyScraper:
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         with open(self._cache_dir / f"{key}.json", "w") as f:
             json.dump(data, f)
+
+    def _load_not_found(self) -> dict[str, str]:
+        """Load the persistent skip list — {str(song_id): title}."""
+        if not self._not_found_path.exists():
+            return {}
+        with open(self._not_found_path) as f:
+            return json.load(f)
+
+    def _save_not_found(self, skip: dict[str, str]) -> None:
+        """Persist the skip list to disk."""
+        self._not_found_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self._not_found_path, "w") as f:
+            json.dump(skip, f, ensure_ascii=False, indent=2, sort_keys=True)
 
     # If Spotify asks us to wait longer than this, abort rather than block.
     MAX_RETRY_WAIT_SECONDS = 120
@@ -279,32 +294,55 @@ class SpotifyScraper:
 
         return results
 
-    def search_track(self, title: str, artist: str | None = None) -> dict | None:
-        """Search for a single track by title. Retries with KR market if US returns nothing."""
+    def search_track(self, title: str, artist: str | None = None, broad: bool = False) -> dict | None:
+        """Search for a single track by title. Retries with KR market if US returns nothing.
+
+        broad=True uses a free-text query instead of field filters — better for version
+        songs where parenthetical labels confuse Spotify's track: filter.
+        Results are cached to disk so the same query never hits the API twice.
+        """
         artist = artist or self.config.artist_name
         for market in ("US", "KR"):
+            q = f'"{title}" "{artist}"' if broad else f"track:{title} artist:{artist}"
+            cache_key = "search_track_" + hashlib.md5(f"{q}|{market}".encode()).hexdigest()
+            cached = self._cache_load(cache_key)
+            if cached is not None:
+                return cached if cached else None
             data = self._get(SPOTIFY_SEARCH_URL, params={
-                "q": f"track:{title} artist:{artist}",
+                "q": q,
                 "type": "track",
                 "limit": 1,
                 "market": market,
             })
             items = data.get("tracks", {}).get("items", [])
             if items:
+                self._cache_save(cache_key, items[0])
                 return items[0]
+            # Cache the miss so we don't re-query on the next run
+            self._cache_save(cache_key, {})
         return None
 
     def search_album(self, title: str, artist: str | None = None) -> dict | None:
-        """Search for an album by title. Retries with KR market if the first attempt returns nothing."""
+        """Search for an album by title. Retries with KR market if the first attempt returns nothing.
+
+        Results are cached to disk so the same query never hits the API twice.
+        """
         artist = artist or self.config.artist_name
         for market in (None, "KR"):
-            params: dict = {"q": f"album:{title} artist:{artist}", "type": "album", "limit": 1}
+            q = f"album:{title} artist:{artist}"
+            cache_key = "search_album_" + hashlib.md5(f"{q}|{market}".encode()).hexdigest()
+            cached = self._cache_load(cache_key)
+            if cached is not None:
+                return cached if cached else None
+            params: dict = {"q": q, "type": "album", "limit": 1}
             if market:
                 params["market"] = market
             data = self._get(SPOTIFY_SEARCH_URL, params=params)
             items = data.get("albums", {}).get("items", [])
             if items:
+                self._cache_save(cache_key, items[0])
                 return items[0]
+            self._cache_save(cache_key, {})
         return None
 
     # -----------------------------------------------------------------------
@@ -687,6 +725,8 @@ class SpotifyScraper:
     def _fallback_search_enrichment(self, db: Session) -> None:
         logger.info("Pass 2: Fallback search for remaining unenriched songs...")
 
+        skip = self._load_not_found()
+
         songs = (
             db.query(Song)
             .filter(
@@ -695,6 +735,10 @@ class SpotifyScraper:
             )
             .all()
         )
+
+        # Exclude songs already known to be absent from Spotify
+        songs = [s for s in songs if str(s.id) not in skip]
+
         logger.info(f"  {len(songs)} songs still need enrichment")
 
         enriched = 0
@@ -704,10 +748,27 @@ class SpotifyScraper:
             result = self.search_track(song.title)
             if not result:
                 not_found += 1
+                skip[str(song.id)] = song.title
                 logger.debug(f"  Not found: {song.title}")
                 continue
 
-            song.spotify_id = result["id"]
+            sp_id = result["id"]
+
+            # If this spotify_id is already on another song, the track: filter likely
+            # matched the wrong variant. Retry with a broad phrase search to find the
+            # version-specific track (e.g. "Lose My Breath (Stray Kids Ver.)").
+            if db.query(Song).filter(Song.spotify_id == sp_id, Song.id != song.id).first():
+                result = self.search_track(song.title, broad=True)
+                if result:
+                    sp_id = result["id"]
+                # If still conflicting or nothing found, add to skip list
+                if not result or db.query(Song).filter(Song.spotify_id == sp_id, Song.id != song.id).first():
+                    skip[str(song.id)] = song.title
+                    logger.debug(f"  No distinct Spotify track found for: {song.title}")
+                    not_found += 1
+                    continue
+
+            song.spotify_id = sp_id
             song.duration_seconds = result["duration_ms"] // 1000
             isrc = result.get("external_ids", {}).get("isrc")
             self._safe_set_isrc(db, song, isrc)
@@ -718,6 +779,9 @@ class SpotifyScraper:
                 logger.info(f"  Enriched: {song.title} ({song.duration_seconds}s)")
             except Exception:
                 db.rollback()
+                # Rollback expires the ORM object — re-set fields explicitly
+                song.spotify_id = sp_id
+                song.duration_seconds = result["duration_ms"] // 1000
                 song.isrc = None
                 try:
                     db.commit()
@@ -726,6 +790,8 @@ class SpotifyScraper:
                 except Exception:
                     db.rollback()
                     not_found += 1
+                    skip[str(song.id)] = song.title
                     logger.warning(f"  Skipped: {song.title}")
 
+        self._save_not_found(skip)
         logger.info(f"Pass 2 complete. Enriched: {enriched} | Not found: {not_found}")
