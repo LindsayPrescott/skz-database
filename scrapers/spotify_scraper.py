@@ -262,7 +262,16 @@ class SpotifyScraper:
 
         for i in range(0, len(uncached_ids), 50):
             batch = uncached_ids[i:i + 50]
-            data = self._get(SPOTIFY_TRACKS_URL, params={"ids": ",".join(batch)})
+            try:
+                data = self._get(SPOTIFY_TRACKS_URL, params={"ids": ",".join(batch)})
+            except Exception as e:
+                if "403" in str(e):
+                    logger.warning(
+                        "  /v1/tracks?ids= returned 403 — batch track endpoint is unavailable "
+                        "with client credentials. ISRC enrichment skipped for this batch."
+                    )
+                    break
+                raise
             for track in data.get("tracks", []):
                 if track:
                     self._cache_save(f"track_{track['id']}", track)
@@ -376,7 +385,6 @@ class SpotifyScraper:
         try:
             self._discover_missing_releases(db)
             self._album_first_enrichment(db)
-            self._batch_isrc_fetch(db)
             self._trackless_release_fallback(db)
             self._fallback_search_enrichment(db)
         except RateLimitExceeded as e:
@@ -412,10 +420,12 @@ class SpotifyScraper:
         sp_albums = self.get_artist_albums()
 
         # Build normalised (title, release_type) → id map of what we already have
+        all_releases = db.query(Release).all()
         existing = {
             (r.title.lower().strip(), r.release_type): r.id
-            for r in db.query(Release).all()
+            for r in all_releases
         }
+        existing_spotify_ids = {r.spotify_id for r in all_releases if r.spotify_id}
 
         new_count = 0
         for sp_album in sp_albums:
@@ -423,6 +433,8 @@ class SpotifyScraper:
             sp_type = sp_album.get("album_type", "single")
             release_type = self._SPOTIFY_TYPE_MAP.get(sp_type, "digital_single")
 
+            if sp_album["id"] in existing_spotify_ids:
+                continue
             if (title.lower().strip(), release_type) in existing:
                 continue
 
@@ -503,8 +515,10 @@ class SpotifyScraper:
                     continue
                 title = sp_track["name"]
                 duration_s = sp_track["duration_ms"] // 1000
-                # ISRC is not fetched here — Pass 1.1 batch-fetches ISRCs for all
-                # Pass 1 songs after album traversal completes.
+                # ISRC not fetched here. /v1/tracks?ids= is 403 with client
+                # credentials; individual /v1/tracks/{id} calls are expensive.
+                # ISRCs for Pass 1 songs will be populated by a future
+                # MusicBrainz phase via Spotify URL → Recording → ISRC lookup.
                 isrc = None
 
                 song = self._find_song(db, title, sp_id)
@@ -545,47 +559,6 @@ class SpotifyScraper:
             db.commit()
 
         logger.info(f"Pass 1 complete. Enriched: {enriched_songs} | New songs added: {new_songs}")
-
-    # -----------------------------------------------------------------------
-    # Pass 1.1: Batch ISRC fetch
-    # -----------------------------------------------------------------------
-
-    def _batch_isrc_fetch(self, db: Session) -> None:
-        """
-        Pass 1.1: Batch-fetch ISRCs for all songs that have a spotify_id but
-        no ISRC. Songs enriched by Pass 1 never enter Pass 2 (Pass 2 filters
-        on spotify_id IS NULL), so without this pass they never get ISRC set.
-
-        Uses the /v1/tracks endpoint — ~3-4 calls for a full discography
-        (50 IDs per batch request).
-        """
-        songs = (
-            db.query(Song)
-            .filter(Song.spotify_id.isnot(None), Song.isrc.is_(None))
-            .all()
-        )
-
-        if not songs:
-            logger.info("Pass 1.1: All songs already have ISRC — skipping.")
-            return
-
-        logger.info(f"Pass 1.1: Fetching ISRCs for {len(songs)} songs...")
-
-        id_to_song = {s.spotify_id: s for s in songs}
-        track_data = self.get_tracks_batch(list(id_to_song.keys()))
-
-        enriched = 0
-        for track in track_data:
-            if not track:
-                continue
-            isrc = track.get("external_ids", {}).get("isrc")
-            song = id_to_song.get(track.get("id"))
-            if song and isrc:
-                self._safe_set_isrc(db, song, isrc)
-                enriched += 1
-
-        db.commit()
-        logger.info(f"Pass 1.1 complete. ISRCs set: {enriched}")
 
     # -----------------------------------------------------------------------
     # Pass 1.5: Trackless release fallback
