@@ -23,6 +23,11 @@ data/raw/
 data/spotify_cache/
 data/spotify_not_found.json
 
+# MusicBrainz API response cache and reports
+data/musicbrainz_cache/
+data/musicbrainz_gap_report.json
+data/musicbrainz_gap_report.md
+
 # IDE
 .vscode/
 .idea/
@@ -36,3 +41,4 @@ PROGRESS.md
 CLAUDE.md
 IDEAS.md
 ARCHITECTURE.md
+data/youtube_urls_backup.json

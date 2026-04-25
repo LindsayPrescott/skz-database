@@ -19,6 +19,7 @@ Available phases (run in order when specified):
   dedup-songs         Phase 4  — Deduplicate song rows
   spotify             Phase 5  — Spotify enrichment
   youtube             Phase 6  — YouTube MV enrichment
+  musicbrainz         Phase 7  — MusicBrainz ISRC + Recording MBID enrichment
 """
 import argparse
 import logging
@@ -36,6 +37,7 @@ from scrapers.wikipedia_song_articles_scraper import WikipediaSongArticlesScrape
 from scrapers.fandom_scraper import FandomScraper
 from scrapers.spotify_scraper import SpotifyScraper
 from scrapers.youtube_scraper import YouTubeScraper
+from scrapers.musicbrainz_scraper import MusicBrainzScraper
 from scrapers.utils import find_song, find_song_by_any_title, link_song_to_release
 
 
@@ -303,6 +305,7 @@ PHASES = [
     "dedup-songs",
     "spotify",
     "youtube",
+    "musicbrainz",
 ]
 
 
@@ -346,6 +349,10 @@ def run_phases(phases: list[str], config=SKZ_CONFIG, use_cache: bool = True) -> 
         if "youtube" in phases:
             print("Phase 6: YouTube MV enrichment")
             YouTubeScraper(config).enrich_songs(db)
+
+        if "musicbrainz" in phases:
+            print("Phase 7: MusicBrainz ISRC + Recording MBID enrichment")
+            MusicBrainzScraper(use_cache=use_cache).enrich_songs(db)
 
         print("Done.")
     finally:

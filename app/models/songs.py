@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Index, Integer, String, Text, ForeignKey
+from sqlalchemy import Boolean, Column, Index, Integer, String, Text, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from app.models.base import Base
@@ -28,6 +28,7 @@ class Song(Base):
     original_artist = Column(String(300))  # For covers
     spotify_id = Column(String(100), unique=True)
     isrc = Column(String(20), unique=True)
+    musicbrainz_id = Column(String(36), nullable=True)
     wikipedia_url = Column(String(500))
     fandom_url = Column(String(500))
     youtube_url = Column(String(500))
@@ -37,6 +38,7 @@ class Song(Base):
     notes = Column(Text)
 
     __table_args__ = (
+        UniqueConstraint("musicbrainz_id", name="uq_songs_musicbrainz_id"),
         Index("ix_songs_parent_song_id", "parent_song_id"),
         Index("ix_songs_release_status", "release_status"),
         Index("ix_songs_language", "language"),
