@@ -2,7 +2,7 @@
 
 A comprehensive Stray Kids discography database with a REST API. Covers studio albums, EPs, singles, digital releases, SKZ-RECORD, SKZ-PLAYER, unreleased songs, song credits, and chart data.
 
-Data is scraped from Wikipedia, the Stray Kids Fandom Wiki, and Spotify.
+Data is scraped from Wikipedia, the Stray Kids Fandom Wiki, Spotify, YouTube, and MusicBrainz.
 
 ---
 
@@ -77,6 +77,8 @@ External contributors not in the Stray Kids artist roster. Queryable via `/colla
 - Docker Desktop
 - Poetry (`brew install poetry`)
 - Spotify Developer credentials (Client ID + Secret) — [create a free app](https://developer.spotify.com/dashboard)
+- YouTube Data API v3 key — [enable in Google Cloud Console](https://console.cloud.google.com) (free: 10,000 units/day)
+- A contact email address for the MusicBrainz `User-Agent` header (no account required)
 
 ### 1. Clone and install dependencies
 
@@ -98,6 +100,8 @@ DATABASE_URL=postgresql://skz_user:skz_password@db:5432/skz_db
 LOCAL_DATABASE_URL=postgresql://skz_user:skz_password@localhost:5433/skz_db
 SPOTIFY_CLIENT_ID=your_client_id
 SPOTIFY_CLIENT_SECRET=your_client_secret
+YOUTUBE_API_KEY=your_api_key
+MUSICBRAINZ_CONTACT=your_email@example.com
 ```
 
 > `LOCAL_DATABASE_URL` uses port `5433` because port `5432` is reserved for a native PostgreSQL installation on this machine.
@@ -140,6 +144,7 @@ API available at `http://localhost:8000`. Interactive docs at `http://localhost:
 | 4 | `dedup-songs` | *(deduplication)* | Merges case-insensitive duplicate songs created by overlapping Wikipedia + Fandom data |
 | 5 | `spotify` | Spotify Web API | `spotify_id`, `isrc`, `duration_seconds` on songs; `spotify_id` on releases; creates missing songs from album tracklists; API responses cached to `data/spotify_cache/` |
 | 6 | `youtube` | YouTube Data API | `youtube_url` (official MV links) on songs |
+| 7 | `musicbrainz` | MusicBrainz API | `musicbrainz_id`, `isrc` on songs via Spotify URL → Recording lookup; responses cached indefinitely to `data/musicbrainz_cache/` |
 
 Phases run in dependency order regardless of the order `--phases` arguments are given.
 
@@ -264,8 +269,21 @@ poetry run python -m scrapers.run_all --phases spotify
 # Spotify — bypass disk cache to force fresh API responses
 poetry run python -m scrapers.run_all --phases spotify --no-cache
 
+# MusicBrainz ISRC + Recording MBID enrichment
+poetry run python -m scrapers.run_all --phases musicbrainz
+
 # Target a specific group (default: skz)
 poetry run python -m scrapers.run_all --group skz --phases spotify
 ```
 
 All phases are idempotent — already-present data is skipped automatically.
+
+### MusicBrainz gap report
+
+A standalone tool (not part of the main pipeline) that compares the local database against MusicBrainz's SKZ recording catalogue and reports which recordings are missing Spotify URL relationships on MB.
+
+```bash
+poetry run python -m scrapers.musicbrainz_report
+```
+
+Outputs `data/musicbrainz_gap_report.md` and `data/musicbrainz_gap_report.json`. The browse results are cached — subsequent runs use the cache unless it is deleted.
